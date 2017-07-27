@@ -3,16 +3,15 @@ module Insert where
 import Prelude
 
 import Column (class ColumnType, And, Column)
-import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.Console (CONSOLE, log)
 import Data.Array (mapWithIndex)
-import Data.Foreign (Foreign, isNull)
+import Data.Foreign (Foreign)
 import Data.Maybe (Maybe(..))
-import Data.StrMap (StrMap, filter, keys, singleton, union, values)
+import Data.StrMap (StrMap, keys, singleton, union, values)
 import Data.String (joinWith)
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
 import Data.Tuple (Tuple(..))
 import Database.PostgreSQL (toSQLValue)
+import Exec (Runner, AffOrm)
 import Record (LProxy(..))
 import Record as R
 import Table (Table)
@@ -47,9 +46,9 @@ mapValues = mapWithIndex (\i _ -> "$" <> show (i + 1))
 insertSql :: forall cd r n. InsertRecord cd r => IsSymbol n => Proxy (Table n cd) -> Record r -> Tuple String (Array Foreign)
 insertSql _ r = Tuple sql vs
   where
-      pairs = filter (not <<< isNull) (toPairs (Proxy :: Proxy cd) r)
+      pairs = toPairs (Proxy :: Proxy cd) r
       vs = values pairs
-      placeholders = joinWith ", " (keys pairs)
+      placeholders = joinWith "," (mapValues $ keys pairs)
       ks = joinWith ", " (keys pairs)
       sql = "INSERT INTO " <>
             reflectSymbol (SProxy :: SProxy n) <>
@@ -59,10 +58,10 @@ insertSql _ r = Tuple sql vs
 
 
 
-insert :: forall fx cd r n i. Defaults i r => InsertRecord cd r => IsSymbol n => Proxy (Table n cd) -> Record i -> Eff (console :: CONSOLE | fx) Unit
-insert t r = do
-  let (Tuple sql params) = insertSql t (withDefaults r)
-  log "test"
+insert :: forall fx cd r n. InsertRecord cd r => IsSymbol n => Runner fx -> Proxy (Table n cd) -> Record r -> AffOrm fx Unit
+insert runner t r = unit <$ do
+  let (Tuple sql params) = insertSql t r
+  runner sql params
 
 
 class DefaultMaybes (ol :: RowList) (o :: # Type) | ol -> o where

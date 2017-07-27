@@ -17,7 +17,7 @@ instance idTypeToSql :: ToSQLValue IdType where
   toSQLValue _ = null
 
 instance idColumnType :: ColumnType IdType (Maybe IdType) Int where
-  createType _ = "id SERIAL PRIMARY KEY"
+  createType _ = "SERIAL PRIMARY KEY"
 
 foreign import kind TBool
 foreign import data TTrue :: TBool

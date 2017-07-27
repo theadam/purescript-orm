@@ -2,17 +2,18 @@ module Connection where
 
 import Prelude
 
-import Control.Monad.Aff (Aff, delay, forkAff)
-import Control.Monad.Aff.AVar (AVar, makeVar, peekVar, putVar, takeVar)
-import Control.Monad.Aff.Console (log)
 import Control.Monad.Aff.Unsafe (unsafeCoerceAff)
 import Control.Monad.Eff (kind Effect)
-import Data.Foreign (Foreign)
-import Data.Symbol (SProxy(..))
-import Data.Time.Duration (Milliseconds(..), Seconds(..))
-import Database.PostgreSQL (Pool, newPool)
-import Database.PostgreSQL as P
+import Create (class CreateRecord, create, createIfNotExists)
+import Data.Maybe (Maybe)
+import Data.Symbol (class IsSymbol)
+import Exec (AffOrm, Config, makeRunner)
+import Insert (class Defaults, class InsertRecord, insert, withDefaults)
+import Query (Query, query, queryOne)
 import Record as R
+import Select (class SelectMappable)
+import Table (Table, drop, truncate)
+import Type.Prelude (Proxy)
 
 type Defaults =
   ( user :: String
@@ -23,9 +24,6 @@ type Defaults =
   , idleTimeoutMillis :: Int
   , logSql :: Boolean
   )
-
-type Config = { database :: String | Defaults }
-
 
 defaults :: Record Defaults
 defaults =
@@ -38,57 +36,56 @@ defaults =
   , logSql: false
   }
 
-foreign import data ORM :: Effect
-
 class Configable (r :: # Type) where
-  createConfig :: Record r -> Config
+  createConfig :: Record r -> Record Config
 instance recordConfig
-  :: ( Union r f ( database :: String | Defaults )
+  :: ( Union r f Config
      , Union f a Defaults
      ) => Configable r where
         createConfig r = R.merge r (R.subrecord defaults)
 
-poolVar :: forall fx. Aff (orm :: ORM | fx) (AVar Pool)
-poolVar = unsafeCoerceAff makeVar
+data Connection fx = Connection
+ { createDb
+   :: AffOrm fx Unit
 
-logVar :: forall fx. Aff (orm :: ORM | fx) (AVar Boolean)
-logVar = unsafeCoerceAff makeVar
+ , create
+   :: forall n cd. IsSymbol n => CreateRecord cd => Proxy (Table n cd) -> AffOrm fx Unit
+ , createIfNotExists
+   :: forall n cd. IsSymbol n => CreateRecord cd => Proxy (Table n cd) -> AffOrm fx Unit
 
-connect :: forall r fx. Configable r => Record r -> Aff ( orm :: ORM | fx ) Unit
+ , drop
+   :: forall n cd. IsSymbol n => Proxy (Table n cd) -> AffOrm fx Unit
+ , truncate
+   :: forall n cd. IsSymbol n => Proxy (Table n cd) -> AffOrm fx Unit
+
+ , insert
+   :: forall n cd r i.
+      IsSymbol n => InsertRecord cd r => Defaults i r =>
+      Proxy (Table n cd) -> Record i -> AffOrm fx Unit
+
+ , queryOne
+   :: forall s r. Query s -> (SelectMappable s r => AffOrm fx (Maybe r))
+ , query
+   :: forall s r. Query s -> (SelectMappable s r => AffOrm fx (Array r))
+ }
+
+connect :: forall r fx. Configable r => Record r -> AffOrm fx (Connection fx)
 connect r = unsafeCoerceAff $ do
   let config = createConfig r
-  pool <- newPool (R.delete (SProxy :: SProxy "logSql") config)
-  var <- poolVar
-  putVar var pool
+  let runner = makeRunner config
+  let adminRunner = makeRunner (config { database = "postgres" })
+  pure $ Connection
+   { createDb: adminRunner ("CREATE DATABASE " <> config.database) [] $> unit
 
-  shouldLog <- logVar
-  putVar shouldLog config.logSql
+   , create: create runner
+   , createIfNotExists: createIfNotExists runner
 
-withConfig :: forall fx r a. Configable r => Record r -> Aff ( orm :: ORM | fx ) a -> Aff (orm :: ORM | fx) Unit
-withConfig config action = do
-  _ <- connect config
-  _ <- action
-  pure unit
+   , drop: drop runner
+   , truncate: truncate runner
 
-query :: forall fx. String -> Array Foreign -> Aff (orm :: ORM | fx) (Array (Array Foreign))
-query sql params = unsafeCoerceAff $ do
-  var <- poolVar
-  pool <- peekVar var
+   , insert: \t rec -> insert runner t (withDefaults rec)
 
-  log' <- logVar
-  shouldLog <- peekVar log'
-
-  case shouldLog of
-       true -> logSql
-       false -> pure unit
-
-  P.withConnection pool run
-    where
-      run conn = P.unsafeQuery conn sql params
-      logSql = log $ "Executing SQL: " <> sqlString sql params
-      sqlString s [] = s
-      sqlString s a = s <> " With Params " <> stringifyParams a
-
-foreign import stringifyParams :: Array Foreign -> String
-
+   , queryOne: \q -> queryOne runner q
+   , query: \q -> query runner q
+   }
 

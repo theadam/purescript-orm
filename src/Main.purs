@@ -3,16 +3,18 @@ module Main where
 import Prelude
 
 import Column (type (&), Column, Default, Id, Nullable, StringColumn)
-import Connection (ORM, withConfig)
-import Control.Alt ((<|>))
+import Connection (Connection(..), connect)
 import Control.Monad.Aff (launchAff)
 import Control.Monad.Aff.Console (CONSOLE, log)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Exception (EXCEPTION)
-import Create (create)
+import Control.Monad.Error.Class (catchError)
+import Data.Foldable (for_)
+import Data.Maybe (Maybe(..))
+import Exec (ORM)
+import Query (filter, select, (.=))
 import Table (Table)
 import Type.Proxy (Proxy(..))
-
 
 type Person = Table "people" (
   Id &
@@ -25,24 +27,30 @@ type Person = Table "people" (
 person :: Proxy Person
 person = Proxy
 
-type Address = Table "addresses" (
-  Id &
-  Column "city" StringColumn &
-  Column "state" StringColumn &
-  Column "zip" StringColumn &
-  Column "line1" StringColumn &
-  Column "line2" (Nullable StringColumn)
-)
-
-address :: Proxy Address
-address = Proxy
-
 main :: forall e. Eff (console :: CONSOLE, exception :: EXCEPTION, orm :: ORM | e) Unit
-main = do
-  const unit <$> (launchAff $ do
-    withConfig { database: "test-orm" , logSql: true } $ do
-      create person <|> log "false"
-  )
+main = unit <$ do
+ launchAff $ create `catchError` handleError
+   where
+     create = do
+       Connection db <- connect { database: "purescript_test", logSql: true }
+
+       db.createIfNotExists person
+       db.truncate person
+
+       db.insert person { first_name: "Adam", last_name: "Nalisnick", middle_name: Just "David" }
+       db.insert person { first_name: "Adam", last_name: "Nalisnick" }
+       db.insert person { first_name: "Adam", last_name: "Nalisnick" }
+       db.insert person { first_name: "Adam", last_name: "Nalisnick" }
+       db.insert person { first_name: "Adam", last_name: "Nalisnick" }
+
+       vals <- db.query $ do
+         p <- select person
+         filter (p.first_name .= "Adam")
+         pure p.first_name
+
+       for_ vals log
+
+     handleError e = log (show e)
 
 
 
