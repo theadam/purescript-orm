@@ -8,7 +8,7 @@ import Create (class CreateRecord, create, createIfNotExists)
 import Data.Maybe (Maybe)
 import Data.Symbol (class IsSymbol)
 import Exec (AffOrm, Config, makeRunner)
-import Insert (class Defaults, class InsertRecord, insert, withDefaults)
+import Insert (class Insertable, insertInto)
 import Query (Query, query, queryOne)
 import Record as R
 import Select (class SelectMappable)
@@ -58,10 +58,8 @@ data Connection fx = Connection
  , truncate
    :: forall n cd. IsSymbol n => Proxy (Table n cd) -> AffOrm fx Unit
 
- , insert
-   :: forall n cd r i.
-      IsSymbol n => InsertRecord cd r => Defaults i r =>
-      Proxy (Table n cd) -> Record i -> AffOrm fx Unit
+ , insertInto
+   :: forall n cd r. IsSymbol n => Proxy (Table n cd) -> (Insertable (Table n cd) r => r -> AffOrm fx Unit)
 
  , queryOne
    :: forall s r. Query s -> (SelectMappable s r => AffOrm fx (Maybe r))
@@ -83,7 +81,7 @@ connect r = unsafeCoerceAff $ do
    , drop: drop runner
    , truncate: truncate runner
 
-   , insert: \t rec -> insert runner t (withDefaults rec)
+   , insertInto: \t -> insertInto runner t
 
    , queryOne: \q -> queryOne runner q
    , query: \q -> query runner q

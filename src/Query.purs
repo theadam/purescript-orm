@@ -82,8 +82,8 @@ queryOne runner q = do
   res <- query runner (q <* modify (_ { limit = Just 1 }))
   pure $ head res
 
-select :: forall r n cd. IsSymbol n => SelectRecord cd r => Proxy (Table n cd) -> Query (Record r)
-select _ = do
+from :: forall r n cd. IsSymbol n => SelectRecord cd r => Proxy (Table n cd) -> Query (Record r)
+from _ = do
   alias <- getAlias table
   froms <- gets (_.froms)
   modify (_ { froms = snoc froms (From table alias) })
@@ -102,3 +102,5 @@ filter f = do
   filters <- gets (_.filters)
   modify (_ { filters = snoc filters f })
 
+select :: forall a. a -> Query a
+select = pure

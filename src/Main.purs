@@ -10,9 +10,8 @@ import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Exception (EXCEPTION)
 import Control.Monad.Error.Class (catchError)
 import Data.Foldable (for_)
-import Data.Maybe (Maybe(..))
 import Exec (ORM)
-import Query (filter, select, (.=))
+import Query (filter, from, select, (.=))
 import Table (Table)
 import Type.Proxy (Proxy(..))
 
@@ -24,8 +23,8 @@ type Person = Table "people" (
   Column "gender" (Default "'MALE'" StringColumn)
 )
 
-person :: Proxy Person
-person = Proxy
+people :: Proxy Person
+people = Proxy
 
 main :: forall e. Eff (console :: CONSOLE, exception :: EXCEPTION, orm :: ORM | e) Unit
 main = unit <$ do
@@ -34,21 +33,17 @@ main = unit <$ do
      create = do
        Connection db <- connect { database: "purescript_test", logSql: true }
 
-       db.createIfNotExists person
-       db.truncate person
+       db.createIfNotExists people
+       db.truncate people
 
-       db.insert person { first_name: "Adam", last_name: "Nalisnick", middle_name: Just "David" }
-       db.insert person { first_name: "Adam", last_name: "Nalisnick" }
-       db.insert person { first_name: "Adam", last_name: "Nalisnick" }
-       db.insert person { first_name: "Adam", last_name: "Nalisnick" }
-       db.insert person { first_name: "Adam", last_name: "Nalisnick" }
+       db.insertInto people { first_name: "Adam", last_name: "Nalisnick", middle_name: "David" }
 
        vals <- db.query $ do
-         p <- select person
-         filter (p.first_name .= "Adam")
-         pure p.first_name
+         person <- from people
+         filter (person.first_name .= "Adam")
+         select person.middle_name
 
-       for_ vals log
+       for_ vals (log <<< show)
 
      handleError e = log (show e)
 

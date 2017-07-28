@@ -14,7 +14,8 @@ import Record as R
 
 foreign import data ORM :: Effect
 
-type AffOrm fx a = Aff (orm :: ORM | fx) a
+type Orm fx = (orm :: ORM | fx)
+type AffOrm fx a = Aff (Orm fx) a
 
 type Config =
   ( database :: String
@@ -46,7 +47,8 @@ exec conf pool sql params = unsafeCoerceAff $ do
       sqlString s [] = s
       sqlString s a = s <> " With Params " <> stringifyParams a
 
-type Runner fx = String -> Array Foreign -> AffOrm fx (Array (Array Foreign))
+type Runner fx = BaseRunner (Orm fx)
+type BaseRunner fx = String -> Array Foreign -> Aff fx (Array (Array Foreign))
 
 makeRunner :: forall fx. Record Config -> Runner fx
 makeRunner conf sql args = unsafeCoerceAff $ do

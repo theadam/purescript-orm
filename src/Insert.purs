@@ -3,23 +3,22 @@ module Insert where
 import Prelude
 
 import Column (class ColumnType, And, Column)
-import Data.Array (mapWithIndex)
-import Data.Foreign (Foreign)
+import Data.Array (filter, snoc)
+import Data.Foldable (foldl)
+import Data.Foreign (Foreign, isNull)
 import Data.Maybe (Maybe(..))
+import Data.Newtype (class Newtype)
 import Data.StrMap (StrMap, keys, singleton, union, values)
 import Data.String (joinWith)
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), fst, snd, uncurry)
 import Database.PostgreSQL (toSQLValue)
-import Exec (Runner, AffOrm)
-import Record (LProxy(..))
+import Defaults (class Defaults, withDefaults)
+import Exec (AffOrm, Runner)
 import Record as R
-import Table (Table)
+import Table (Table, columns, tableName)
 import Type.Data.Boolean (kind Boolean)
-import Type.Data.Symbol (class Equals)
-import Type.Prelude (BProxy(..), False, True)
 import Type.Proxy (Proxy(..))
-import Type.Row (kind RowList, class RowToList, Cons, Nil)
 
 class InsertRecord cd r | cd -> r where
   toPairs :: Proxy cd -> Record r -> StrMap Foreign
@@ -40,105 +39,72 @@ instance colInsertAnd ::
         (toPairs (Proxy :: Proxy c1) (R.subrecord r))
         (toPairs (Proxy :: Proxy c2) (R.subrecord r))
 
-mapValues :: forall a. Show a => Array a -> Array String
-mapValues = mapWithIndex (\i _ -> "$" <> show (i + 1))
+data Placeholder = Default | Param
+data Vals = Single (StrMap Foreign) | Multiple Vals (StrMap Foreign)
 
-insertSql :: forall cd r n. InsertRecord cd r => IsSymbol n => Proxy (Table n cd) -> Record r -> Tuple String (Array Foreign)
-insertSql _ r = Tuple sql vs
+instance semiGroupVals :: Semigroup Vals where
+  append v (Single w) = Multiple v w
+  append v (Multiple ws w) = Multiple (v <> ws) w
+
+newtype Insert t = Insert
+ { vals :: Vals
+ , placeholders :: Array (Array Placeholder)
+ }
+derive instance insertNewtype :: Newtype (Insert t) _
+
+instance semiGroupInsert :: Semigroup (Insert t) where
+  append (Insert a) (Insert b) = Insert
+   { vals: a.vals <> b.vals
+   , placeholders: a.placeholders <> b.placeholders
+   }
+
+replacePlaceholders :: Array (Array Placeholder) -> Array (Array String)
+replacePlaceholders ps = snd $ foldl outer (Tuple 1 []) ps
   where
-      pairs = toPairs (Proxy :: Proxy cd) r
-      vs = values pairs
-      placeholders = joinWith "," (mapValues $ keys pairs)
-      ks = joinWith ", " (keys pairs)
-      sql = "INSERT INTO " <>
-            reflectSymbol (SProxy :: SProxy n) <>
-            " (" <> ks <> ")" <>
-            " VALUES " <>
-            " (" <> placeholders <> ")"
+    outer (Tuple i rows) ary = Tuple (fst res) (snoc rows (snd res))
+      where
+        res = foldl runner (Tuple i []) ary
+    runner (Tuple i row) Default = Tuple i (snoc row "DEFAULT")
+    runner (Tuple i row) Param = Tuple (i + 1) (snoc row ("$" <> show i))
 
+valsHead :: Vals -> StrMap Foreign
+valsHead (Single s) = s
+valsHead (Multiple _ s) = s
 
+valParams :: Vals -> Array Foreign
+valParams (Single map) = values map
+valParams (Multiple vals map) = valParams vals <> values map
 
-insert :: forall fx cd r n. InsertRecord cd r => IsSymbol n => Runner fx -> Proxy (Table n cd) -> Record r -> AffOrm fx Unit
-insert runner t r = unit <$ do
-  let (Tuple sql params) = insertSql t r
-  runner sql params
+class Insertable t a where
+  toInsert :: Proxy t -> a -> Insert t
 
+instance insertableInsertRecord
+  :: ( InsertRecord cd r
+     , Defaults i r
+     ) => Insertable (Table n cd) (Record i) where
+  toInsert t a = Insert
+    { vals: Single pairs
+    , placeholders: [placeholders]
+    }
+      where
+        placeholders = map toPlaceholder (values pairs)
+        toPlaceholder v | isNull v = Default
+                        | otherwise = Param
+        pairs = toPairs (columns t) (withDefaults a)
 
-class DefaultMaybes (ol :: RowList) (o :: # Type) | ol -> o where
-  allNothings :: LProxy ol -> Record o
-instance nilMaybes :: DefaultMaybes Nil () where
-  allNothings _ = {}
-instance consMaybes
-  :: ( IsSymbol k
-     , DefaultMaybes ol' o'
-     , RowCons k (Maybe t) o' o
-     ) => DefaultMaybes (Cons k (Maybe t) ol') o where
-       allNothings _ = R.insert keyProxy Nothing (allNothings (LProxy :: LProxy ol'))
-         where
-           keyProxy = SProxy :: SProxy k
+insertToSql :: forall n cd. IsSymbol n => Insert (Table n cd) -> Tuple String (Array Foreign)
+insertToSql (Insert { vals, placeholders }) = Tuple sql params
+  where
+    sql = space ["INSERT INTO", tableName (Proxy :: Proxy (Table n cd)), cols, "VALUES", ps]
+    params = filter (not <<< isNull) $ valParams vals
+    ps = comma $ map (surround <<< comma) (replacePlaceholders placeholders)
+    vh = valsHead vals
+    cols = surround (comma (keys vh))
+    comma = joinWith ", "
+    space = joinWith " "
+    surround str = "(" <> str <> ")"
 
-class RecMaybe (il :: RowList) (ol :: RowList) (i :: # Type) (o :: # Type)
-  | ol -> o, il -> i where
-    withDefaults' :: LProxy il -> LProxy ol -> Record i -> Record o
-
-instance nilRecMaybe :: DefaultMaybes ol o => RecMaybe Nil ol () o where
-  withDefaults' _ _ _ = allNothings (LProxy :: LProxy ol)
-
-instance consMaybeRecMaybe
-  :: ( IsSymbol k
-     , Equals j k b
-     , RecMaybeHelper (Cons j s il') (Cons k t ol') i o b
-     ) => RecMaybe (Cons j s il') (Cons k t ol') i o where
-  withDefaults' il ol r = withDefaultsHelper (BProxy :: BProxy b) il ol r
-
-instance failRecMaybe
-  :: ( IsSymbol k
-     , Fail (TypeConcat (TypeConcat "'" k) "' is an invalid key for this record")
-     ) => RecMaybe (Cons k t il') Nil i () where
-       withDefaults' _ _ _ = {}
-
-class RecMaybeHelper (il :: RowList) (ol :: RowList) (i :: # Type) (o :: # Type) (b :: Boolean) where
-  withDefaultsHelper :: BProxy b -> LProxy il -> LProxy ol -> Record i -> Record o
-
-instance hasRecMaybeHelper
-  :: ( IsSymbol k
-     , RecMaybe il' ol' i' o'
-     , RowCons k t i' i
-     , RowCons k t o' o
-     ) => RecMaybeHelper (Cons k t il') (Cons k t ol') i o True where
-  withDefaultsHelper _ _ _ r = R.insert keyProxy (R.get keyProxy r) rest
-    where
-      keyProxy = SProxy :: SProxy k
-      rest = withDefaults' (LProxy :: LProxy il') (LProxy :: LProxy ol') (R.delete keyProxy r)
-
-instance hasMaybeRecMaybeHelper
-  :: ( IsSymbol k
-     , RecMaybe il' ol' i' o'
-     , RowCons k t i' i
-     , RowCons k (Maybe t) o' o
-     ) => RecMaybeHelper (Cons k t il') (Cons k (Maybe t) ol') i o True where
-  withDefaultsHelper _ _ _ r = R.insert keyProxy (Just $ R.get keyProxy r) rest
-    where
-      keyProxy = SProxy :: SProxy k
-      rest = withDefaults' (LProxy :: LProxy il') (LProxy :: LProxy ol') (R.delete keyProxy r)
-
-instance doesntHaveRecMaybeHelper
-  :: ( IsSymbol k
-     , RecMaybe il ol' i o'
-     , RowCons k (Maybe t) o' o
-     ) => RecMaybeHelper il (Cons k (Maybe t) ol') i o False where
-  withDefaultsHelper _ _ _ r = R.insert keyProxy Nothing rest
-    where
-      keyProxy = SProxy :: SProxy k
-      rest = withDefaults' (LProxy :: LProxy il) (LProxy :: LProxy ol') r
-
-class Defaults (i :: # Type) (o :: # Type) where
-  withDefaults :: Record i -> Record o
-
-instance defaultsImpl :: (RowToList i il, RowToList o ol, RecMaybe il ol i o) => Defaults i o where
-  withDefaults i = withDefaults' (LProxy :: LProxy il) (LProxy :: LProxy ol) i
-
-
-
+insertInto :: forall n r cd fx. IsSymbol n => Insertable (Table n cd) r => Runner fx -> Proxy (Table n cd) -> r -> AffOrm fx Unit
+insertInto runner table rec = unit <$ ((uncurry runner) $ insertToSql $ toInsert table rec)
 
 
