@@ -11,11 +11,12 @@ import Control.Monad.Eff.Exception (EXCEPTION)
 import Control.Monad.Error.Class (catchError)
 import Data.Foldable (for_)
 import Exec (ORM)
+import Insert ((&))
 import Query (filter, from, select, (.=))
 import Table (Table)
 import Type.Proxy (Proxy(..))
 
-type Person = Table "people" (
+type People = Table "people" (
   Id &
   Column "first_name" StringColumn &
   Column "last_name" StringColumn &
@@ -23,7 +24,7 @@ type Person = Table "people" (
   Column "gender" (Default "'MALE'" StringColumn)
 )
 
-people :: Proxy Person
+people :: Proxy People
 people = Proxy
 
 main :: forall e. Eff (console :: CONSOLE, exception :: EXCEPTION, orm :: ORM | e) Unit
@@ -36,7 +37,16 @@ main = unit <$ do
        db.createIfNotExists people
        db.truncate people
 
-       db.insertInto people { first_name: "Adam", last_name: "Nalisnick", middle_name: "David" }
+       db.insertInto people { first_name: "Adam", last_name: "Nalisnick" }
+
+       db.insertInto people $
+           { first_name: "Adam", last_name: "Nalisnick" } &
+           { first_name: "Adam", last_name: "Nalisnick" } &
+           { first_name: "Adam", last_name: "Nalisnick" } &
+           { first_name: "Adam", last_name: "Nalisnick" } &
+           { first_name: "Adam", last_name: "Nalisnick" } &
+           { first_name: "Adam", last_name: "Nalisnick" } &
+           { first_name: "Adam", last_name: "Nalisnick" }
 
        vals <- db.query $ do
          person <- from people

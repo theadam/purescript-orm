@@ -6,7 +6,7 @@ import Column (class ColumnType, And, Column)
 import Data.Array (filter, snoc)
 import Data.Foldable (foldl)
 import Data.Foreign (Foreign, isNull)
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(Nothing, Just))
 import Data.Newtype (class Newtype)
 import Data.StrMap (StrMap, keys, singleton, union, values)
 import Data.String (joinWith)
@@ -75,6 +75,10 @@ valParams :: Vals -> Array Foreign
 valParams (Single map) = values map
 valParams (Multiple vals map) = valParams vals <> values map
 
+mayIns :: forall t. Maybe (Insert t) -> Insert t -> Insert t
+mayIns Nothing i = i
+mayIns (Just i) j = i <> j
+
 class Insertable t a where
   toInsert :: Proxy t -> a -> Insert t
 
@@ -104,7 +108,33 @@ insertToSql (Insert { vals, placeholders }) = Tuple sql params
     space = joinWith " "
     surround str = "(" <> str <> ")"
 
-insertInto :: forall n r cd fx. IsSymbol n => Insertable (Table n cd) r => Runner fx -> Proxy (Table n cd) -> r -> AffOrm fx Unit
+insertInto :: forall n r cd fx. IsSymbol n => Runner fx -> Proxy (Table n cd) -> r -> (Insertable (Table n cd) r => AffOrm fx Unit)
 insertInto runner table rec = unit <$ ((uncurry runner) $ insertToSql $ toInsert table rec)
+
+data NilInsertList = NilInsertList
+data InsertList h t = InsertList h t
+
+class InsertListable h t r | t -> r where
+  appendInsertList :: h -> t -> InsertList h r
+
+instance bothRecInsertListable :: InsertListable (Record i) (Record j) (InsertList (Record j) NilInsertList) where
+  appendInsertList i j = InsertList i (InsertList j NilInsertList)
+
+instance leftRecInsertListable :: InsertListable (Record i) (InsertList h t) (InsertList h t) where
+  appendInsertList i j = InsertList i j
+
+infixr 6 appendInsertList as &
+
+class AllInsertable t h where
+  toInsert' :: (Proxy t) -> h -> Insert t
+instance nilInsertable :: (Insertable t r) => AllInsertable t (InsertList r NilInsertList) where
+  toInsert' t (InsertList h _) = toInsert t h
+instance recInsertable
+  :: (Insertable t r, AllInsertable t (InsertList s s'))
+  => AllInsertable t (InsertList r (InsertList s s')) where
+    toInsert' t (InsertList h tail) = toInsert t h <> toInsert' t tail
+
+instance listInsertable :: (AllInsertable t (InsertList h tail)) =>  Insertable t (InsertList h tail) where
+  toInsert t list = toInsert' t list
 
 
