@@ -11,8 +11,7 @@ import Control.Monad.Eff.Exception (EXCEPTION)
 import Control.Monad.Error.Class (catchError)
 import Data.Foldable (for_)
 import Exec (ORM)
-import Insert ((&))
-import Query (filter, from, select, (.=))
+import RecordList ((&))
 import Table (Table)
 import Type.Proxy (Proxy(..))
 
@@ -37,23 +36,15 @@ main = unit <$ do
        db.createIfNotExists people
        db.truncate people
 
-       db.insertInto people { first_name: "Adam", last_name: "Nalisnick" }
+       first <- db.insertInto people { first_name: "Adam", last_name: "Nalisnick" }
 
-       db.insertInto people $
-           { first_name: "Adam", last_name: "Nalisnick" } &
-           { first_name: "Adam", last_name: "Nalisnick" } &
-           { first_name: "Adam", last_name: "Nalisnick" } &
-           { first_name: "Adam", last_name: "Nalisnick" } &
-           { first_name: "Adam", last_name: "Nalisnick" } &
+
+       saved <- db.insertInto people $
            { first_name: "Adam", last_name: "Nalisnick" } &
            { first_name: "Adam", last_name: "Nalisnick" }
 
-       vals <- db.query $ do
-         person <- from people
-         filter (person.first_name .= "Adam")
-         select person.middle_name
 
-       for_ vals (log <<< show)
+       for_ saved (log <<< show <<< (_.gender))
 
      handleError e = log (show e)
 

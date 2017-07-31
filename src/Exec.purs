@@ -7,6 +7,7 @@ import Control.Monad.Aff.Console (log)
 import Control.Monad.Aff.Unsafe (unsafeCoerceAff)
 import Control.Monad.Eff (kind Effect)
 import Data.Foreign (Foreign)
+import Data.String (joinWith)
 import Data.Symbol (SProxy(..))
 import Database.PostgreSQL (Pool, newPool)
 import Database.PostgreSQL as P
@@ -40,12 +41,21 @@ exec conf pool sql params = unsafeCoerceAff $ do
        true -> logSql
        false -> pure unit
 
-  P.withConnection pool run
+  res <- P.withConnection pool run
+
+  case shouldLog of
+       true -> logResults res
+       false -> pure unit
+
+  pure res
     where
       run conn = P.unsafeQuery conn sql params
       logSql = log $ "Executing SQL: " <> sqlString sql params
       sqlString s [] = s
       sqlString s a = s <> " With Params " <> stringifyParams a
+      logResults [] = log $ "No Return value."
+      logResults res = log $ "Return Values SQL: " <> joinWith ", " (toRes <$> res)
+      toRes s = "(" <> stringifyParams s <> ")"
 
 type Runner fx = BaseRunner (Orm fx)
 type BaseRunner fx = String -> Array Foreign -> Aff fx (Array (Array Foreign))

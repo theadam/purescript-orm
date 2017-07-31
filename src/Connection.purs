@@ -59,7 +59,7 @@ data Connection fx = Connection
    :: forall n cd. IsSymbol n => Proxy (Table n cd) -> AffOrm fx Unit
 
  , insertInto
-   :: forall n cd r. IsSymbol n => Insertable (Table n cd) r => Proxy (Table n cd) -> r -> AffOrm fx Unit
+   :: forall n cd r res. IsSymbol n => Proxy (Table n cd) -> r -> (Insertable (Table n cd) r res => AffOrm fx res)
 
  , queryOne
    :: forall s r. Query s -> (SelectMappable s r => AffOrm fx (Maybe r))
@@ -81,7 +81,7 @@ connect r = unsafeCoerceAff $ do
    , drop: drop runner
    , truncate: truncate runner
 
-   , insertInto: \t rec -> insertInto runner t rec
+   , insertInto: \t r -> insertInto runner t r
 
    , queryOne: \q -> queryOne runner q
    , query: \q -> query runner q

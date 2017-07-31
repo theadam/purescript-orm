@@ -3,19 +3,24 @@ module Insert where
 import Prelude
 
 import Column (class ColumnType, And, Column)
-import Data.Array (filter, snoc)
+import Control.Monad.Eff.Exception (error)
+import Control.Monad.Error.Class (throwError)
+import Data.Array (filter, head, snoc, zip)
+import Data.Either (Either(..))
 import Data.Foldable (foldl)
 import Data.Foreign (Foreign, isNull)
 import Data.Maybe (Maybe(Nothing, Just))
-import Data.Newtype (class Newtype)
-import Data.StrMap (StrMap, keys, singleton, union, values)
+import Data.Newtype (class Newtype, unwrap)
+import Data.StrMap (StrMap, fromFoldable, keys, lookup, singleton, union, values)
 import Data.String (joinWith)
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
+import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..), fst, snd, uncurry)
-import Database.PostgreSQL (toSQLValue)
+import Database.PostgreSQL (class FromSQLValue, fromSQLValue, toSQLValue)
 import Defaults (class Defaults, withDefaults)
 import Exec (AffOrm, Runner)
 import Record as R
+import RecordList (NilRecordList, RecordList(RecordList))
 import Table (Table, columns, tableName)
 import Type.Data.Boolean (kind Boolean)
 import Type.Proxy (Proxy(..))
@@ -79,13 +84,16 @@ mayIns :: forall t. Maybe (Insert t) -> Insert t -> Insert t
 mayIns Nothing i = i
 mayIns (Just i) j = i <> j
 
-class Insertable t a where
+class Insertable t a res | a t -> res where
   toInsert :: Proxy t -> a -> Insert t
+  toResult
+    :: Proxy t -> Proxy a -> (Array (StrMap Foreign)) -> Either String res
 
 instance insertableInsertRecord
   :: ( InsertRecord cd r
      , Defaults i r
-     ) => Insertable (Table n cd) (Record i) where
+     , InsertResponse (Table n cd) res
+     ) => Insertable (Table n cd) (Record i) res where
   toInsert t a = Insert
     { vals: Single pairs
     , placeholders: [placeholders]
@@ -95,46 +103,84 @@ instance insertableInsertRecord
         toPlaceholder v | isNull v = Default
                         | otherwise = Param
         pairs = toPairs (columns t) (withDefaults a)
+  toResult t _ f = case head f of
+    Nothing -> Left "Invalid empty insert result"
+    Just h -> toResponse t h
+
+insertCols :: forall t. Insert t -> Array String
+insertCols = keys <<< valsHead <<< (_.vals) <<< unwrap
 
 insertToSql :: forall n cd. IsSymbol n => Insert (Table n cd) -> Tuple String (Array Foreign)
 insertToSql (Insert { vals, placeholders }) = Tuple sql params
   where
-    sql = space ["INSERT INTO", tableName (Proxy :: Proxy (Table n cd)), cols, "VALUES", ps]
+    sql = space ["INSERT INTO", tableName (Proxy :: Proxy (Table n cd)), cols, "VALUES", ps, "RETURNING", bareCols]
     params = filter (not <<< isNull) $ valParams vals
     ps = comma $ map (surround <<< comma) (replacePlaceholders placeholders)
     vh = valsHead vals
-    cols = surround (comma (keys vh))
+    bareCols = comma (keys vh)
+    cols = surround (bareCols)
     comma = joinWith ", "
     space = joinWith " "
     surround str = "(" <> str <> ")"
 
-insertInto :: forall n r cd fx. IsSymbol n => Runner fx -> Proxy (Table n cd) -> r -> (Insertable (Table n cd) r => AffOrm fx Unit)
-insertInto runner table rec = unit <$ ((uncurry runner) $ insertToSql $ toInsert table rec)
+insertInto :: forall n r cd fx res. IsSymbol n => Runner fx -> Proxy (Table n cd) -> r -> (Insertable (Table n cd) r res => AffOrm fx res)
+insertInto runner table rec = do
+  let ins = toInsert table rec
+  arry <- ((uncurry runner) $ insertToSql $ ins)
 
-data NilInsertList = NilInsertList
-data InsertList h t = InsertList h t
+  let cols = insertCols ins
+  let convert a = fromFoldable $ zip cols a
+  let maps = convert <$> arry
 
-class InsertListable h t r | t -> r where
-  appendInsertList :: h -> t -> InsertList h r
+  let res = toResult table (Proxy :: Proxy r) maps
 
-instance bothRecInsertListable :: InsertListable (Record i) (Record j) (InsertList (Record j) NilInsertList) where
-  appendInsertList i j = InsertList i (InsertList j NilInsertList)
-
-instance leftRecInsertListable :: InsertListable (Record i) (InsertList h t) (InsertList h t) where
-  appendInsertList i j = InsertList i j
-
-infixr 6 appendInsertList as &
+  case res of
+    Right r -> pure r
+    Left s -> throwError $ error s
 
 class AllInsertable t h where
   toInsert' :: (Proxy t) -> h -> Insert t
-instance nilInsertable :: (Insertable t r) => AllInsertable t (InsertList r NilInsertList) where
-  toInsert' t (InsertList h _) = toInsert t h
-instance recInsertable
-  :: (Insertable t r, AllInsertable t (InsertList s s'))
-  => AllInsertable t (InsertList r (InsertList s s')) where
-    toInsert' t (InsertList h tail) = toInsert t h <> toInsert' t tail
+instance nilInsertable :: (Insertable t r res) => AllInsertable t (RecordList r NilRecordList) where
+  toInsert' t (RecordList h _) = toInsert t h
+instance recAllInsertable
+  :: (Insertable t r res, AllInsertable t (RecordList s s'))
+  => AllInsertable t (RecordList r (RecordList s s')) where
+    toInsert' t (RecordList h tail) = toInsert t h <> toInsert' t tail
 
-instance listInsertable :: (AllInsertable t (InsertList h tail)) =>  Insertable t (InsertList h tail) where
+instance listInsertable
+  :: ( AllInsertable t (RecordList h tail)
+     , InsertResponse t res
+     ) =>  Insertable t (RecordList h tail) (Array res) where
   toInsert t list = toInsert' t list
+  toResult t _ f = sequence $ toResponse t <$> f
 
+class InsertResponse t res where
+  toResponse :: Proxy t -> StrMap Foreign -> Either String res
+instance tableInsertColumns
+  :: InsertResponseColumns cd res => InsertResponse (Table n cd) res where
+    toResponse table = toResponse' $ columns table
+
+class InsertResponseColumns cd res | cd -> res where
+  toResponse' :: Proxy cd -> StrMap Foreign -> Either String res
+instance colInsertResponse
+  :: ( ColumnType ty i o
+     , IsSymbol n
+     , FromSQLValue o
+     , RowCons n o () res
+     ) => InsertResponseColumns (Column n ty) (Record res)
+       where
+         toResponse' _ map = case lookup name map of
+           Nothing -> Left $ "Invalid insert response for " <> name
+           Just h -> R.insert (SProxy :: SProxy n) <$> fromSQLValue h <@> {}
+             where name = reflectSymbol (SProxy :: SProxy n)
+
+instance andInsertResponse
+  :: ( InsertResponseColumns c1 (Record r1)
+     , InsertResponseColumns c2 (Record r2)
+     , Union r1 r2 r3
+     ) => InsertResponseColumns (And c1 c2) (Record r3)
+       where
+         toResponse' _ map = R.merge <$>
+           (toResponse' (Proxy :: Proxy c1) map :: Either String (Record r1)) <*>
+           (toResponse' (Proxy :: Proxy c2) map)
 
