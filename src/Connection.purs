@@ -23,6 +23,7 @@ type Defaults =
   , max :: Int
   , idleTimeoutMillis :: Int
   , logSql :: Boolean
+  , logResults :: Boolean
   )
 
 defaults :: Record Defaults
@@ -34,6 +35,7 @@ defaults =
   , max: 10
   , idleTimeoutMillis: 1000
   , logSql: false
+  , logResults: false
   }
 
 class Configable (r :: # Type) where
@@ -60,6 +62,8 @@ data Connection fx = Connection
 
  , insertInto
    :: forall n cd r res. IsSymbol n => Proxy (Table n cd) -> r -> (Insertable (Table n cd) r res => AffOrm fx res)
+   , insertInto_
+   :: forall n cd r res. IsSymbol n => Proxy (Table n cd) -> r -> (Insertable (Table n cd) r res => AffOrm fx Unit)
 
  , queryOne
    :: forall s r. Query s -> (SelectMappable s r => AffOrm fx (Maybe r))
@@ -81,7 +85,8 @@ connect r = unsafeCoerceAff $ do
    , drop: drop runner
    , truncate: truncate runner
 
-   , insertInto: \t r -> insertInto runner t r
+   , insertInto: \t record -> insertInto runner t record
+   , insertInto_: \t record -> unit <$ insertInto runner t record
 
    , queryOne: \q -> queryOne runner q
    , query: \q -> query runner q

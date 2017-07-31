@@ -27,6 +27,7 @@ type Config =
   , max :: Int
   , idleTimeoutMillis :: Int
   , logSql :: Boolean
+  , logResults :: Boolean
   )
 
 exec
@@ -35,15 +36,13 @@ exec
  -> Pool
  -> Runner fx
 exec conf pool sql params = unsafeCoerceAff $ do
-  let shouldLog = conf.logSql
-
-  case shouldLog of
+  case conf.logSql of
        true -> logSql
        false -> pure unit
 
   res <- P.withConnection pool run
 
-  case shouldLog of
+  case conf.logResults of
        true -> logResults res
        false -> pure unit
 
@@ -62,7 +61,9 @@ type BaseRunner fx = String -> Array Foreign -> Aff fx (Array (Array Foreign))
 
 makeRunner :: forall fx. Record Config -> Runner fx
 makeRunner conf sql args = unsafeCoerceAff $ do
-  pool <- newPool (R.delete (SProxy :: SProxy "logSql") conf)
+  let withoutLogSql = R.delete (SProxy :: SProxy "logSql") conf
+  let poolConf = R.delete (SProxy :: SProxy "logResults") withoutLogSql
+  pool <- newPool poolConf
   exec conf pool sql args
 
 foreign import stringifyParams :: Array Foreign -> String
