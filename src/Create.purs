@@ -2,10 +2,11 @@ module Create where
 
 import Prelude
 
-import Column (class ColumnType, And, Column, createType)
+import Column (And, Column)
 import Control.Monad.Aff (Aff)
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
 import Exec (ORM, Runner)
+import SQLExpression (class ColumnType, createType)
 import Table (Table)
 import Type.Proxy (Proxy(..))
 

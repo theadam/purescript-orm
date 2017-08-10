@@ -2,36 +2,38 @@ module Insert where
 
 import Prelude
 
-import Column (class ColumnType, And, Column)
+import Column (And, Column)
 import Control.Monad.Eff.Exception (error)
 import Control.Monad.Error.Class (throwError)
-import Data.Array (filter, head, snoc, zip)
+import Data.Array (head, zip)
 import Data.Either (Either(..))
-import Data.Foldable (foldl)
+import Data.Foldable (fold, intercalate)
 import Data.Foreign (Foreign, isNull)
-import Data.Maybe (Maybe(Nothing, Just))
+import Data.Maybe (Maybe(Nothing, Just), fromMaybe)
 import Data.Newtype (class Newtype, unwrap)
-import Data.StrMap (StrMap, fromFoldable, keys, lookup, singleton, union, values)
+import Data.StrMap (StrMap, empty, fromFoldable, keys, lookup, singleton, union, values)
 import Data.String (joinWith)
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
 import Data.Traversable (sequence)
-import Data.Tuple (Tuple(..), fst, snd, uncurry)
-import Database.PostgreSQL (class FromSQLValue, fromSQLValue, toSQLValue)
+import Data.Tuple (Tuple, uncurry)
+import Database.PostgreSQL (class FromSQLValue, fromSQLValue)
 import Defaults (class Defaults, withDefaults)
 import Exec (AffOrm, Runner)
 import Record as R
 import RecordList (NilRecordList, RecordList(RecordList))
+import SQLExpression (class ColumnType, class SQLExpression, toSQLExpression)
 import Table (Table, columns, tableName)
 import Type.Data.Boolean (kind Boolean)
 import Type.Proxy (Proxy(..))
+import Utils (ParamSQL(..), SQLPart(..), addCommas, realize, surroundWith)
 
 class InsertRecord cd r | cd -> r where
-  toPairs :: Proxy cd -> Record r -> StrMap Foreign
+  toPairs :: Proxy cd -> Record r -> StrMap ParamSQL
 
 instance colInsertRecord ::
-  (ColumnType cd i o, IsSymbol n, RowCons n i () r) =>
+  (SQLExpression i t, ColumnType cd i o, IsSymbol n, RowCons n i () r) =>
   InsertRecord (Column n cd) r where
-    toPairs _ r = singleton (reflectSymbol sproxy) (toSQLValue (R.get sproxy r))
+    toPairs _ r = singleton (reflectSymbol sproxy) (toSQLExpression (R.get sproxy r))
       where
         proxy = Proxy :: Proxy cd
         sproxy = SProxy :: SProxy n
@@ -44,45 +46,11 @@ instance colInsertAnd ::
         (toPairs (Proxy :: Proxy c1) (R.subrecord r))
         (toPairs (Proxy :: Proxy c2) (R.subrecord r))
 
-data Placeholder = Default | Param
-data Vals = Single (StrMap Foreign) | Multiple Vals (StrMap Foreign)
-
-instance semiGroupVals :: Semigroup Vals where
-  append v (Single w) = Multiple v w
-  append v (Multiple ws w) = Multiple (v <> ws) w
-
-newtype Insert t = Insert
- { vals :: Vals
- , placeholders :: Array (Array Placeholder)
- }
+newtype Insert t = Insert (Array (StrMap ParamSQL))
 derive instance insertNewtype :: Newtype (Insert t) _
 
-instance semiGroupInsert :: Semigroup (Insert t) where
-  append (Insert a) (Insert b) = Insert
-   { vals: a.vals <> b.vals
-   , placeholders: a.placeholders <> b.placeholders
-   }
-
-replacePlaceholders :: Array (Array Placeholder) -> Array (Array String)
-replacePlaceholders ps = snd $ foldl outer (Tuple 1 []) ps
-  where
-    outer (Tuple i rows) ary = Tuple (fst res) (snoc rows (snd res))
-      where
-        res = foldl runner (Tuple i []) ary
-    runner (Tuple i row) Default = Tuple i (snoc row "DEFAULT")
-    runner (Tuple i row) Param = Tuple (i + 1) (snoc row ("$" <> show i))
-
-valsHead :: Vals -> StrMap Foreign
-valsHead (Single s) = s
-valsHead (Multiple _ s) = s
-
-valParams :: Vals -> Array Foreign
-valParams (Single map) = values map
-valParams (Multiple vals map) = valParams vals <> values map
-
-mayIns :: forall t. Maybe (Insert t) -> Insert t -> Insert t
-mayIns Nothing i = i
-mayIns (Just i) j = i <> j
+instance smigroupInsert :: Semigroup (Insert t) where
+  append (Insert p1) (Insert p2) = Insert (p1 <> p2)
 
 class Insertable t a res | a t -> res where
   toInsert :: Proxy t -> a -> Insert t
@@ -94,30 +62,32 @@ instance insertableInsertRecord
      , Defaults i r
      , InsertResponse (Table n cd) res
      ) => Insertable (Table n cd) (Record i) res where
-  toInsert t a = Insert
-    { vals: Single pairs
-    , placeholders: [placeholders]
-    }
-      where
-        placeholders = map toPlaceholder (values pairs)
-        toPlaceholder v | isNull v = Default
-                        | otherwise = Param
-        pairs = toPairs (columns t) (withDefaults a)
+  toInsert t a = Insert [pairs]
+    where
+      pairs = toPairs (columns t) (withDefaults a)
   toResult t _ f = case head f of
     Nothing -> Left "Invalid empty insert result"
     Just h -> toResponse t h
 
-insertCols :: forall t. Insert t -> Array String
-insertCols = keys <<< valsHead <<< (_.vals) <<< unwrap
+nullToDefault :: ParamSQL -> ParamSQL
+nullToDefault (ParamSQL a) = ParamSQL $ map addDefaults a
+  where
+    addDefaults (Param n) | isNull n = Raw "DEFAULT"
+                          | otherwise = Param n
+    addDefaults s = s
 
 insertToSQL :: forall n cd. IsSymbol n => Insert (Table n cd) -> Tuple String (Array Foreign)
-insertToSQL (Insert { vals, placeholders }) = Tuple sql params
+insertToSQL (Insert maps) = realize sql
   where
-    sql = space ["INSERT INTO", tableName (Proxy :: Proxy (Table n cd)), cols, "VALUES", ps, "RETURNING", bareCols]
-    params = filter (not <<< isNull) $ valParams vals
-    ps = comma $ map (surround <<< comma) (replacePlaceholders placeholders)
-    vh = valsHead vals
-    bareCols = comma (keys vh)
+    start = ParamSQL $ [Raw (space
+      ["INSERT INTO", tableName (Proxy :: Proxy (Table n cd)), cols, "VALUES "]
+    )]
+    end = ParamSQL $ [Raw (space [" RETURNING", bareCols])]
+    sql = start <> params <> end
+    params = intercalate (ParamSQL $ [Raw ", "]) $
+      (surroundWith "(" ")" <<< addCommas <<< nullToDefault <<< fold <<< values)
+      <$> maps
+    bareCols = comma (keys $ fromMaybe empty (head maps))
     cols = surround (bareCols)
     comma = joinWith ", "
     space = joinWith " "
@@ -128,7 +98,7 @@ insertInto runner table rec = do
   let ins = toInsert table rec
   arry <- ((uncurry runner) $ insertToSQL $ ins)
 
-  let cols = insertCols ins
+  let cols = keys $ fromMaybe empty (head (unwrap ins))
   let convert a = fromFoldable $ zip cols a
   let maps = convert <$> arry
 

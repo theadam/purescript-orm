@@ -2,10 +2,13 @@ module Column where
 
 import Prelude
 
-import Data.Maybe (Maybe)
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
-import Database.PostgreSQL (class FromSQLValue, class ToSQLValue, null)
+import Database.PostgreSQL (class FromSQLValue, null)
+import SQLExpression (class ColumnType, class SQLExpression, createType)
 import Type.Proxy (Proxy(..))
+import Utils (ParamSQL(..), SQLPart(..))
 
 data And c1 c2
 infixr 7 type And as &
@@ -13,8 +16,12 @@ infixr 7 type And as &
 data IdType
 type Id = Column "id" IdType
 
-instance idTypeToSQL :: ToSQLValue IdType where
-  toSQLValue _ = null
+instance idTypeFromSQLValue :: FromSQLValue IdType where
+  fromSQLValue _ = Left "IdType is not a valid type"
+
+instance idTypeSQLExpression :: SQLExpression IdType IdType where
+  toSQLExpression _ = ParamSQL [Param $ null]
+  typeSQL m = Nothing
 
 instance idColumnType :: ColumnType IdType (Maybe IdType) Int where
   createType _ = "SERIAL PRIMARY KEY"
@@ -22,9 +29,6 @@ instance idColumnType :: ColumnType IdType (Maybe IdType) Int where
 foreign import kind TBool
 foreign import data TTrue :: TBool
 foreign import data TFalse :: TBool
-
-class (ToSQLValue i, FromSQLValue o) <= ColumnType cd i o | cd -> i, cd -> o where
-  createType :: Proxy cd -> String
 
 class Lengthable a where
   fieldLength :: Proxy a -> Int
@@ -45,16 +49,16 @@ type StringColumn = VarChar Normal
 data Column (name :: Symbol) cd
 
 data NotNull cd
-instance notNullType :: (ColumnType cd i o) => ColumnType (NotNull cd) i o where
+instance notNullType :: (SQLExpression i i, ColumnType cd i o) => ColumnType (NotNull cd) i o where
   createType _ = createType (Proxy :: Proxy cd) <> " NOT NULL"
 
 data Nullable cd
-instance nullType :: (ColumnType cd i o) => ColumnType (Nullable cd) (Maybe i) (Maybe o) where
+instance nullType :: (SQLExpression i i, ColumnType cd i o) => ColumnType (Nullable cd) (Maybe i) (Maybe o) where
   createType _ = createType (Proxy :: Proxy cd) <> " NULL"
 
 data Default (def :: Symbol) cd
 instance defaultType ::
-  (ColumnType cd i o, IsSymbol a) =>
+  (SQLExpression i i, ColumnType cd i o, IsSymbol a) =>
   ColumnType (Default a cd) (Maybe i) o where
     createType _ = createType proxy <> " DEFAULT " <> reflectSymbol sproxy
       where

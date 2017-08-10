@@ -2,7 +2,7 @@ module Utils where
 
 import Prelude
 
-import Data.Array (cons)
+import Data.Array (cons, singleton)
 import Data.Foldable (intercalate)
 import Data.Foreign (Foreign)
 import Data.List (List(..), fromFoldable, (:))
@@ -53,3 +53,12 @@ realize' i Nil = Tuple "" []
 
 toParam :: Int -> String
 toParam i = "$" <> show i
+
+addCommas :: ParamSQL -> ParamSQL
+addCommas (ParamSQL array) = ParamSQL $ intercalate [Raw ", "] $ map singleton array
+
+surroundWith :: String -> String -> ParamSQL -> ParamSQL
+surroundWith s s2 p = str <> p <> str2
+  where
+    str = ParamSQL $ [Raw s]
+    str2 = ParamSQL $ [Raw s2]
