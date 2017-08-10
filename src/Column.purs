@@ -13,7 +13,7 @@ infixr 7 type And as &
 data IdType
 type Id = Column "id" IdType
 
-instance idTypeToSql :: ToSQLValue IdType where
+instance idTypeToSQL :: ToSQLValue IdType where
   toSQLValue _ = null
 
 instance idColumnType :: ColumnType IdType (Maybe IdType) Int where

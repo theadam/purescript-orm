@@ -22,7 +22,7 @@ type Defaults =
   , port :: Int
   , max :: Int
   , idleTimeoutMillis :: Int
-  , logSql :: Boolean
+  , logSQL :: Boolean
   , logResults :: Boolean
   )
 
@@ -34,7 +34,7 @@ defaults =
   , port: 5432
   , max: 10
   , idleTimeoutMillis: 1000
-  , logSql: false
+  , logSQL: false
   , logResults: false
   }
 
@@ -66,9 +66,9 @@ data Connection fx = Connection
    :: forall n cd r res. IsSymbol n => Proxy (Table n cd) -> r -> (Insertable (Table n cd) r res => AffOrm fx Unit)
 
  , queryOne
-   :: forall s r. Query s -> (SelectMappable s r => AffOrm fx (Maybe r))
+   :: forall s r any. Query s -> (SelectMappable s r any => AffOrm fx (Maybe r))
  , query
-   :: forall s r. Query s -> (SelectMappable s r => AffOrm fx (Array r))
+   :: forall s r any. Query s -> (SelectMappable s r any => AffOrm fx (Array r))
  }
 
 connect :: forall r fx. Configable r => Record r -> AffOrm fx (Connection fx)

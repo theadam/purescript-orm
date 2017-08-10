@@ -110,8 +110,8 @@ instance insertableInsertRecord
 insertCols :: forall t. Insert t -> Array String
 insertCols = keys <<< valsHead <<< (_.vals) <<< unwrap
 
-insertToSql :: forall n cd. IsSymbol n => Insert (Table n cd) -> Tuple String (Array Foreign)
-insertToSql (Insert { vals, placeholders }) = Tuple sql params
+insertToSQL :: forall n cd. IsSymbol n => Insert (Table n cd) -> Tuple String (Array Foreign)
+insertToSQL (Insert { vals, placeholders }) = Tuple sql params
   where
     sql = space ["INSERT INTO", tableName (Proxy :: Proxy (Table n cd)), cols, "VALUES", ps, "RETURNING", bareCols]
     params = filter (not <<< isNull) $ valParams vals
@@ -126,7 +126,7 @@ insertToSql (Insert { vals, placeholders }) = Tuple sql params
 insertInto :: forall n r cd fx res. IsSymbol n => Runner fx -> Proxy (Table n cd) -> r -> (Insertable (Table n cd) r res => AffOrm fx res)
 insertInto runner table rec = do
   let ins = toInsert table rec
-  arry <- ((uncurry runner) $ insertToSql $ ins)
+  arry <- ((uncurry runner) $ insertToSQL $ ins)
 
   let cols = insertCols ins
   let convert a = fromFoldable $ zip cols a

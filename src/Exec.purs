@@ -26,7 +26,7 @@ type Config =
   , port :: Int
   , max :: Int
   , idleTimeoutMillis :: Int
-  , logSql :: Boolean
+  , logSQL :: Boolean
   , logResults :: Boolean
   )
 
@@ -36,8 +36,8 @@ exec
  -> Pool
  -> Runner fx
 exec conf pool sql params = unsafeCoerceAff $ do
-  case conf.logSql of
-       true -> logSql
+  case conf.logSQL of
+       true -> logSQL
        false -> pure unit
 
   res <- P.withConnection pool run
@@ -49,7 +49,7 @@ exec conf pool sql params = unsafeCoerceAff $ do
   pure res
     where
       run conn = P.unsafeQuery conn sql params
-      logSql = log $ "Executing SQL: " <> sqlString sql params
+      logSQL = log $ "Executing SQL: " <> sqlString sql params
       sqlString s [] = s
       sqlString s a = s <> " With Params " <> stringifyParams a
       logResults [] = log $ "No Return value."
@@ -61,8 +61,8 @@ type BaseRunner fx = String -> Array Foreign -> Aff fx (Array (Array Foreign))
 
 makeRunner :: forall fx. Record Config -> Runner fx
 makeRunner conf sql args = unsafeCoerceAff $ do
-  let withoutLogSql = R.delete (SProxy :: SProxy "logSql") conf
-  let poolConf = R.delete (SProxy :: SProxy "logResults") withoutLogSql
+  let withoutLogSQL = R.delete (SProxy :: SProxy "logSQL") conf
+  let poolConf = R.delete (SProxy :: SProxy "logResults") withoutLogSQL
   pool <- newPool poolConf
   exec conf pool sql args
 

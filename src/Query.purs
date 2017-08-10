@@ -6,19 +6,18 @@ import Control.Monad.Aff (Aff)
 import Control.Monad.Eff.Exception (error)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.State (State, gets, modify, runState)
-import Data.Array (head, snoc, zip)
+import Data.Array (head, snoc)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
-import Data.StrMap (fromFoldable)
 import Data.String (joinWith)
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
 import Data.Traversable (sequence)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), snd, uncurry)
 import Exec (ORM, Runner, AffOrm)
 import Select (class SelectMappable, class SelectRecord, getSelects, mapToResult, toSelectables)
 import Table (Table)
 import Type.Proxy (Proxy(..))
-import Utils (class Sqlable, toSql)
+import Utils (ParamSQL(..), SQLPart(..), joinParamSQLWith, realize)
 
 data From = From String String
 fromToSelect :: From -> String
@@ -26,7 +25,8 @@ fromToSelect (From table alias) = table <> " " <> alias
 
 initialQueryState :: QueryState
 initialQueryState =
-  { aliasCount: 0
+  { fromAliasCount: 0
+  , selectAliasCount: 0
   , froms: []
   , filters: []
   , limit: Nothing
@@ -34,7 +34,8 @@ initialQueryState =
   }
 
 type QueryState =
- { aliasCount :: Int
+ { fromAliasCount :: Int
+ , selectAliasCount :: Int
  , froms :: Array From
  , filters :: Array Filter
  , limit :: Maybe Int
@@ -45,15 +46,14 @@ type Query r = State QueryState r
 
 getAlias :: String -> Query String
 getAlias table = do
-   current <- gets (_.aliasCount)
+   current <- gets (_.fromAliasCount)
    let next = current + 1
-   modify (_ { aliasCount = next })
+   modify (_ { fromAliasCount = next })
    pure $ table <> show next
 
-queryStateToSelect :: String -> QueryState -> String
-queryStateToSelect selects { froms, filters, limit } =
-  "SELECT " <> selects <> " FROM " <> joinWith ", " (fromToSelect <$> froms) <>
-  whereClause filters <> limit' limit
+queryStateToSelect :: ParamSQL -> QueryState -> ParamSQL
+queryStateToSelect (ParamSQL selects) { froms, filters, limit } =
+  ParamSQL $ [Raw "SELECT "] <> selects <> [Raw (" FROM " <> joinWith ", " (fromToSelect <$> froms) <> whereClause filters <> limit' limit)]
     where
       whereClause [] = ""
       whereClause a = " WHERE " <> joinWith " AND " (unfilter <$> filters)
@@ -61,23 +61,20 @@ queryStateToSelect selects { froms, filters, limit } =
       limit' Nothing = ""
       limit' (Just n) = " LIMIT " <> show n
 
-query :: forall fx s r. SelectMappable s r => Runner fx -> Query s -> AffOrm fx (Array r)
+query :: forall fx s r any. SelectMappable s r any => Runner fx -> Query s -> AffOrm fx (Array r)
 query runner q = do
   let (Tuple s q) = runState q initialQueryState
-  let selectList = getSelects s
-  let selects = joinWith ", " selectList
-  let sql = queryStateToSelect selects q
+  let paramSQLList = joinParamSQLWith ", " $ getSelects s
+  let sql = queryStateToSelect paramSQLList q
 
-  arr <- runner sql []
-  let toSelectMap item = fromFoldable (zip selectList item)
-  let maps = toSelectMap <$> arr
-  let res = sequence $ mapToResult s <$> maps
+  arr <- uncurry runner $ realize sql
+  let res = sequence $ map snd <$> mapToResult s <$> arr
 
   case res of
        Left s -> throwError (error s)
        Right rec -> pure rec
 
-queryOne :: forall fx. Runner fx -> (forall s. Query s -> (forall r. SelectMappable s r => Aff (orm :: ORM | fx) (Maybe r)))
+queryOne :: forall fx any. Runner fx -> (forall s. Query s -> (forall r. SelectMappable s r any => Aff (orm :: ORM | fx) (Maybe r)))
 queryOne runner q = do
   res <- query runner (q <* modify (_ { limit = Just 1 }))
   pure $ head res
@@ -92,10 +89,6 @@ from _ = do
       table = reflectSymbol (SProxy :: SProxy n)
 
 data Filter = Filter String
-
-isEqual :: forall a b. Sqlable a => Sqlable b => a -> b -> Filter
-isEqual a b = Filter (toSql a <> " = " <> toSql b)
-infixr 6 isEqual as .=
 
 filter :: Filter -> Query Unit
 filter f = do
