@@ -2,16 +2,24 @@ module ParameterizedSql where
 
 import Prelude
 
-import Data.Array (intercalate, cons)
+import Data.Array (cons, intercalate)
 import Data.List (List(..), (:), fromFoldable)
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst, snd)
+import Foreign (Foreign, unsafeToForeign)
+import Utils (null)
 
 data Value
  = StringValue String
  | IntValue Int
  | NumberValue Number
  | NullValue
+
+valueToForeign :: Value -> Foreign
+valueToForeign (StringValue a) = unsafeToForeign a
+valueToForeign (IntValue a) = unsafeToForeign a
+valueToForeign (NumberValue a) = unsafeToForeign a
+valueToForeign NullValue = null
 
 class ToValue a where
   toValue :: a -> Value
@@ -87,11 +95,15 @@ instance showSQLPart :: Show SqlPart where
   show (Param f) = "[" <> show f <> "]"
   show (TypedParam f _) = show $ Param f
 
+sqlTupleToString :: Tuple String (Array Value) -> String
+sqlTupleToString t = fst t <> "\n\t" <> "With Params: (" <> params <> ")"
+  where
+    params = intercalate ", " $ show <$> snd t
+
 sqlToString :: (ParameterizedSql -> Tuple String (Array Value)) -> ParameterizedSql -> String
-sqlToString r p = fst realized <> "\n\t" <> "With Params: (" <> params <> ")"
+sqlToString r p = sqlTupleToString realized
     where
       realized = r p
-      params = intercalate ", " $ show <$> snd realized
 
 instance showParameterizedSql :: Show ParameterizedSql where
   show p = sqlToString defaultRealize p

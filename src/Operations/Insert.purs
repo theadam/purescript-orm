@@ -3,7 +3,7 @@ module Operations.Insert where
 import Prelude
 
 import Classes.Insert (class InsertResult, class Insertable, values, mapResult)
-import Connection (class MonadConnection, runOperation, Operation(..))
+import Connection (class MonadQuerier, runOperation, Operation(..))
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.Writer (Writer, tell, execWriter)
 import Data.Array (head)
@@ -13,16 +13,16 @@ import Effect.Exception (error)
 import ParameterizedSql (Value)
 import TableDefinition (Table)
 
-insertBase :: forall m conn res cs
-  . MonadConnection conn m
+insertBase :: forall m res cs
+  . MonadQuerier m
   => InsertResult cs res
   => Table cs -> Array (Array Value) -> m (Array res)
 insertBase t r = do
   fs <- runOperation $ Insert t.name t.columnNames r
   sequence $ mapResult t.columns <$> fs
 
-insert :: forall m conn r res cs
-  . MonadConnection conn m
+insert :: forall m r res cs
+  . MonadQuerier m
   => Insertable cs r
   => InsertResult cs res
   => Table cs -> r -> m res
@@ -32,8 +32,8 @@ insert t r = do
     Nothing -> throwError $ error "Empty result from insert"
     Just a -> pure a
 
-insertBatch :: forall m cs conn res
-  . MonadConnection conn m
+insertBatch :: forall m cs res
+  . MonadQuerier m
   => InsertResult cs res
   => Table cs
   -> ((forall r. Insertable cs r => r -> Writer (Array (Array Value)) Unit) -> Writer (Array (Array Value)) Unit) -> m (Array res)

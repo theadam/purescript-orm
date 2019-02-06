@@ -6,6 +6,7 @@ import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Data.Array (cons)
 import Data.Either (Either(..))
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
+import Foreign (Foreign)
 import Prim.RowList (Nil, Cons, class RowToList)
 import Type.Data.Row (RProxy)
 import Type.Data.RowList (RLProxy(..))
@@ -32,3 +33,4 @@ convertEither (Right a) = pure a
 convertEither (Left b) = throwError b
 
 foreign import stringify :: forall a. a -> String
+foreign import null :: Foreign

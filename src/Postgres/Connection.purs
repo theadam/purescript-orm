@@ -2,7 +2,7 @@ module Postgres.Connection where
 
 import Prelude
 
-import Connection (class MonadConnection, Operation(..))
+import Connection (class MonadConnection, class MonadQuerier, Operation(..))
 import Control.Monad.Cont (lift)
 import Control.Monad.Error.Class (class MonadError, class MonadThrow)
 import Control.Monad.Reader (class MonadAsk, ReaderT, ask, runReaderT)
@@ -10,14 +10,14 @@ import Convert as Convert
 import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype)
 import Data.Tuple (fst, snd)
-import Database.PostgreSQL (Connection, Pool, Query(..), command, newPool, null, unsafeQuery)
+import Database.PostgreSQL (Connection, Pool, Query(..), command, newPool, unsafeQuery)
 import Database.PostgreSQL as P
 import Effect.Aff (Aff)
 import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
 import Effect.Exception (Error)
-import Foreign (Foreign, unsafeToForeign)
-import ParameterizedSql (ParameterizedSql, SqlPart(..), Value(..), commaJoin, mapParts, positionalToParam, realize, (:<>))
+import Foreign (Foreign)
+import ParameterizedSql (ParameterizedSql, SqlPart(..), Value(..), commaJoin, mapParts, positionalToParam, realize, sqlTupleToString, (:<>), valueToForeign)
 import Utils (stringify)
 
 -- Env Section
@@ -46,6 +46,10 @@ defaultConfig =
   , logResults: false
   }
 
+newtype Env = Env { pool :: Pool, logSql :: Boolean, logResults :: Boolean }
+
+derive instance newtypeEnv :: Newtype Env _
+
 makeConnection :: Config -> Aff Env
 makeConnection c = do
   pool <- newPool
@@ -59,21 +63,11 @@ makeConnection c = do
     }
   pure $ Env { pool: pool, logSql: c.logSql, logResults: c.logResults }
 
-newtype Env = Env { pool :: Pool, logSql :: Boolean, logResults :: Boolean }
 
-derive instance newtypeEnv :: Newtype Env _
-
-
--- Convet Section
+-- Convert Section
 nullToDefault :: SqlPart -> SqlPart
 nullToDefault (Param NullValue) = StringPart "DEFAULT"
 nullToDefault a = a
-
-valueToForeign :: Value -> Foreign
-valueToForeign (StringValue a) = unsafeToForeign a
-valueToForeign (IntValue a) = unsafeToForeign a
-valueToForeign (NumberValue a) = unsafeToForeign a
-valueToForeign NullValue = null
 
 convert :: Operation -> ParameterizedSql
 convert ins@(Insert name intos values) = mapParts nullToDefault (Convert.convert ins) :<> " RETURNING " :<> commaJoin intos
@@ -98,7 +92,7 @@ runWith runner sql = do
   (Env env) <- ask
 
   case env.logSql of
-    true -> log $ "\n" <> show sql
+    true -> log $ "\n" <> sqlTupleToString realized
     false -> pure unit
 
   let res = Postgres $ lift $ P.withConnection env.pool (\conn -> runner conn query params)
@@ -115,7 +109,7 @@ runWith runner sql = do
       params = valueToForeign <$> snd realized
 
 
-instance monadConnectionPostgres :: MonadConnection Env Postgres where
+instance monadQuerierPostgres :: MonadQuerier Postgres where
   runOperation op = runWith unsafeQuery $ convert op
   runCommand op = runWith (\conn s -> command conn (Query s)) $ convert op
 
@@ -124,4 +118,6 @@ instance monadConnectionPostgres :: MonadConnection Env Postgres where
     let (Env env) = wrapped
     let aff = runReaderT m wrapped
     Postgres $ lift $ P.withConnection env.pool (\c -> P.withTransaction c aff)
+
+instance monadConnectionPostgres :: MonadConnection Env Postgres where
   withConnection env (Postgres m) = runReaderT m env

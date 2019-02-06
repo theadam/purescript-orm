@@ -2,14 +2,15 @@ module Main where
 
 import Prelude
 
+import Connection (withTransaction, withConnection, class MonadQuerier)
 import Data.Foldable (for_)
 import Effect (Effect)
 import Effect.Aff (launchAff_)
+import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
 import Operations (createIfNotExists, insertBatch, truncate)
+import Postgres.Connection as Postgres
 import TableDefinition (Table, makeTable, Default, Id, Nullable, StringColumn)
-import Connection (withTransaction, withConnection)
-import Postgres.Connection (makeConnection, defaultConfig)
 
 
 people :: Table
@@ -21,22 +22,27 @@ people :: Table
   )
 people = makeTable "people"
 
+operations :: forall m. MonadEffect m => MonadQuerier m => m Unit
+operations = do
+  createIfNotExists people
+  truncate people
+
+  withTransaction do
+    newPeople <- insertBatch people \value -> do
+      value { first_name: "George", last_name: "Washington" }
+      value { first_name: "John", last_name: "Adams" }
+      value { first_name: "Thomas", last_name: "Jefferson" }
+
+    for_ newPeople \person -> do
+      log $ show person
+
 main :: Effect Unit
 main = launchAff_ $ do
-  connection <- makeConnection (
-    defaultConfig { database = "purescript_test", logSql = true, logResults = true }
+  let log = true
+
+  connection <- Postgres.makeConnection (
+    Postgres.defaultConfig { database = "purescript_test", logSql = log, logResults = log }
   )
 
-  withConnection connection do
-    createIfNotExists people
-    truncate people
-
-    withTransaction do
-      newPeople <- insertBatch people $ \value -> do
-        value { first_name: "George", last_name: "Washington" }
-        value { first_name: "John", last_name: "Adams" }
-        value { first_name: "Thomas", last_name: "Jefferson" }
-
-      for_ newPeople $ \person -> do
-        log $ show person
+  withConnection connection operations
 

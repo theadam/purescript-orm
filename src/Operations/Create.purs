@@ -3,11 +3,11 @@ module Operations.Create where
 import Prelude
 
 import Classes.Create (class Creatable, columnDefinitions)
-import Connection (class MonadConnection, runOperation, Operation(..))
+import Connection (class MonadQuerier, runOperation, Operation(..))
 import TableDefinition (Table)
 
-createBase :: forall m conn cs
-  . MonadConnection conn m
+createBase :: forall m cs
+  . MonadQuerier m
   => Creatable cs
   => Boolean -> Table cs -> m Unit
 createBase mod t = do
@@ -15,14 +15,14 @@ createBase mod t = do
   pure unit
 
 
-create :: forall m conn cs
-  . MonadConnection conn m
+create :: forall m cs
+  . MonadQuerier m
   => Creatable cs
   => Table cs -> m Unit
 create = createBase false
 
-createIfNotExists :: forall m conn cs
-  . MonadConnection conn m
+createIfNotExists :: forall m cs
+  . MonadQuerier m
   => Creatable cs
   => Table cs -> m Unit
 createIfNotExists = createBase true
