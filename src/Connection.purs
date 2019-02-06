@@ -2,93 +2,21 @@ module Connection where
 
 import Prelude
 
-import Control.Monad.Aff.Unsafe (unsafeCoerceAff)
-import Control.Monad.Eff (kind Effect)
-import Create (class CreateRecord, create, createIfNotExists)
-import Data.Maybe (Maybe)
-import Data.Symbol (class IsSymbol)
-import Exec (AffOrm, Config, makeRunner)
-import Insert (class Insertable, insertInto)
-import Query (Query, query, queryOne)
-import Record as R
-import Select (class SelectMappable)
-import Table (Table, drop, truncate)
-import Type.Prelude (Proxy)
+import Control.Monad.Error.Class (class MonadError)
+import Effect.Exception (Error)
+import Foreign (Foreign)
+import Effect.Aff (Aff)
+import Data.Tuple (Tuple)
+import ParameterizedSql (Value)
 
-type Defaults =
-  ( user :: String
-  , password :: String
-  , host :: String
-  , port :: Int
-  , max :: Int
-  , idleTimeoutMillis :: Int
-  , logSQL :: Boolean
-  , logResults :: Boolean
-  )
+data Operation
+  = Insert String (Array String) (Array (Array Value))
+  | Create Boolean String (Array (Tuple String String))
+  | Truncate String
 
-defaults :: Record Defaults
-defaults =
-  { user: "postgres"
-  , password: "postgres"
-  , host: "127.0.0.1"
-  , port: 5432
-  , max: 10
-  , idleTimeoutMillis: 1000
-  , logSQL: false
-  , logResults: false
-  }
-
-class Configable (r :: # Type) where
-  createConfig :: Record r -> Record Config
-instance recordConfig
-  :: ( Union r f Config
-     , Union f a Defaults
-     ) => Configable r where
-        createConfig r = R.merge r (R.subrecord defaults)
-
-data Connection fx = Connection
- { createDb
-   :: AffOrm fx Unit
-
- , create
-   :: forall n cd. IsSymbol n => CreateRecord cd => Proxy (Table n cd) -> AffOrm fx Unit
- , createIfNotExists
-   :: forall n cd. IsSymbol n => CreateRecord cd => Proxy (Table n cd) -> AffOrm fx Unit
-
- , drop
-   :: forall n cd. IsSymbol n => Proxy (Table n cd) -> AffOrm fx Unit
- , truncate
-   :: forall n cd. IsSymbol n => Proxy (Table n cd) -> AffOrm fx Unit
-
- , insertInto
-   :: forall n cd r res. IsSymbol n => Proxy (Table n cd) -> r -> (Insertable (Table n cd) r res => AffOrm fx res)
-   , insertInto_
-   :: forall n cd r res. IsSymbol n => Proxy (Table n cd) -> r -> (Insertable (Table n cd) r res => AffOrm fx Unit)
-
- , queryOne
-   :: forall s r any. Query s -> (SelectMappable s r any => AffOrm fx (Maybe r))
- , query
-   :: forall s r any. Query s -> (SelectMappable s r any => AffOrm fx (Array r))
- }
-
-connect :: forall r fx. Configable r => Record r -> AffOrm fx (Connection fx)
-connect r = unsafeCoerceAff $ do
-  let config = createConfig r
-  let runner = makeRunner config
-  let adminRunner = makeRunner (config { database = "postgres" })
-  pure $ Connection
-   { createDb: adminRunner ("CREATE DATABASE " <> config.database) [] $> unit
-
-   , create: create runner
-   , createIfNotExists: createIfNotExists runner
-
-   , drop: drop runner
-   , truncate: truncate runner
-
-   , insertInto: \t record -> insertInto runner t record
-   , insertInto_: \t record -> unit <$ insertInto runner t record
-
-   , queryOne: \q -> queryOne runner q
-   , query: \q -> query runner q
-   }
+class (Monad m, MonadError Error m) <= MonadConnection conn m | m -> conn, conn -> m where
+  runOperation :: Operation -> m (Array (Array Foreign))
+  runCommand :: Operation -> m Int
+  withTransaction :: forall a. m a -> m a
+  withConnection :: forall a. conn -> m a -> Aff a
 

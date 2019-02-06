@@ -7,7 +7,12 @@
     "test": "test"
   },
   "dependencies": {
-    "pg": "^6.4.1"
+    "bower": "^1.8.4",
+    "decimal.js": "^10.0.2",
+    "pg": "^7.7.1",
+    "pulp": "^12.3.1",
+    "purty": "^3.0.7",
+    "sqlite3": "^4.0.6"
   },
   "devDependencies": {},
   "scripts": {

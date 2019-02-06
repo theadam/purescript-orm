@@ -2,63 +2,33 @@ module Utils where
 
 import Prelude
 
-import Data.Array (cons, singleton)
-import Data.Foldable (intercalate)
-import Data.Foreign (Foreign)
-import Data.List (List(..), fromFoldable, (:))
-import Data.Monoid (class Monoid)
+import Control.Monad.Error.Class (class MonadThrow, throwError)
+import Data.Array (cons)
+import Data.Either (Either(..))
 import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
-import Data.Tuple (Tuple(..))
+import Prim.RowList (Nil, Cons, class RowToList)
+import Type.Data.Row (RProxy)
+import Type.Data.RowList (RLProxy(..))
+import Type.Proxy (Proxy)
 
-data Selectable (n :: Symbol) t = Selectable String
-
-data SQLPart = Raw String | Param Foreign | TypedParam Foreign String
-data ParamSQL = ParamSQL (Array SQLPart)
-
-fromString :: String -> ParamSQL
-fromString s = ParamSQL $ [Raw s]
-
-instance paramSQLSemigroup :: Semigroup ParamSQL where
-  append (ParamSQL a) (ParamSQL b) = ParamSQL (a <> b)
-instance paramSQLMonoit :: Monoid ParamSQL where
-  mempty = ParamSQL []
-
-toParts :: ParamSQL -> Array SQLPart
-toParts (ParamSQL a) = a
-
-joinParamSQLWith :: String -> Array ParamSQL -> ParamSQL
-joinParamSQLWith s ary = ParamSQL $ intercalate [Raw s] $ toParts <$> ary
-
-toSelect :: forall n t. IsSymbol n => Selectable n t -> ParamSQL
-toSelect (Selectable alias) = ParamSQL
-  [Raw $ alias <> "." <> reflectSymbol (SProxy :: SProxy n)]
-
-realize :: ParamSQL -> Tuple String (Array Foreign)
-realize (ParamSQL a) = realize' 1 $ fromFoldable a
-
-realizeWithTypes :: ParamSQL -> Tuple String (Array Foreign)
-realizeWithTypes (ParamSQL a) = realize' 1 $ fromFoldable a
-
-realize' :: Int -> List SQLPart -> Tuple String (Array Foreign)
-realize' i (Raw str:rest) = Tuple (str <> rStr) (rParams)
-  where
-    Tuple rStr rParams = realize' i rest
-realize' i (Param f:rest) = Tuple (toParam i <> rStr) (cons f rParams)
-  where
-    Tuple rStr rParams = realize' (i + 1) rest
-realize' i (TypedParam f s:rest) = Tuple (toParam i <> "::" <> s <> rStr) (cons f rParams)
-  where
-    Tuple rStr rParams = realize' (i + 1) rest
-realize' i Nil = Tuple "" []
+data ColumnAlias (columnName :: Symbol) o = ColumnAlias String
 
 toParam :: Int -> String
 toParam i = "$" <> show i
 
-addCommas :: ParamSQL -> ParamSQL
-addCommas (ParamSQL array) = ParamSQL $ intercalate [Raw ", "] $ map singleton array
+class Keys rl where
+    keys :: rl -> Array String
+instance rowKeys :: (RowToList r rl, Keys (RLProxy rl)) => Keys (RProxy r) where
+    keys _ = keys (RLProxy :: RLProxy rl)
+else instance nilKeys :: Keys (RLProxy Nil) where
+    keys _ = []
+else instance consKeys :: (Keys (RLProxy rl'), IsSymbol k) => Keys (RLProxy (Cons k v rl')) where
+    keys _ = cons (reflectSymbol (SProxy :: SProxy k)) (keys (RLProxy :: RLProxy rl'))
+else instance recordKeys :: (RowToList r rl, Keys (RLProxy rl)) => Keys (Proxy (Record r)) where
+    keys _ = keys (RLProxy :: RLProxy rl)
 
-surroundWith :: String -> String -> ParamSQL -> ParamSQL
-surroundWith s s2 p = str <> p <> str2
-  where
-    str = ParamSQL $ [Raw s]
-    str2 = ParamSQL $ [Raw s2]
+convertEither :: forall a b m. MonadThrow b m => Either b a -> m a
+convertEither (Right a) = pure a
+convertEither (Left b) = throwError b
+
+foreign import stringify :: forall a. a -> String
