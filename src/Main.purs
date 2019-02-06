@@ -8,8 +8,9 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
-import Operations (createIfNotExists, insertBatch, truncate)
+import Operations (createIfNotExists, insertBatch, truncate, drop)
 import Postgres.Connection as Postgres
+import Sqlite.Connection as Sqlite
 import TableDefinition (Table, makeTable, Default, Id, Nullable, StringColumn)
 
 
@@ -36,13 +37,20 @@ operations = do
     for_ newPeople \person -> do
       log $ show person
 
+  drop people
+
 main :: Effect Unit
 main = launchAff_ $ do
-  let log = true
+  let logOps = true
 
+  log "Running with Postgres"
   connection <- Postgres.makeConnection (
-    Postgres.defaultConfig { database = "purescript_test", logSql = log, logResults = log }
+    Postgres.defaultConfig { database = "purescript_test", logSql = logOps, logResults = logOps }
   )
 
   withConnection connection operations
 
+  log "Running with Sqlite"
+  sqlite <- Sqlite.makeConnection { filePath: "test.db", logSql: logOps, logResults: logOps }
+
+  withConnection sqlite operations

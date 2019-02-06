@@ -29,13 +29,21 @@ makeTable name = {
     colProxy = RProxy
     columnNames = keys colProxy
 
+data ColumnDefinition
+  = Id
+  | Varchar Int
+  | NotNull ColumnDefinition
+  | Nullable ColumnDefinition
+  | Default String ColumnDefinition
+
+
 class ColumnType cd i o | cd -> i, cd -> o where
-  createType :: Proxy cd -> String
+  columnDefinition :: Proxy cd -> ColumnDefinition
 
 data Id
 
 instance idColumnType :: ColumnType Id (Maybe Id) Int where
-  createType _ = "SERIAL PRIMARY KEY"
+  columnDefinition _ = Id
 
 instance valueId :: ToValue Id where
   toValue _ = NullValue
@@ -47,25 +55,25 @@ data Normal
 instance normalLength :: Lengthable Normal where
   fieldLength _ = 255
 
-data VarChar l
-instance varCharType :: Lengthable l => ColumnType (VarChar l) String String where
-  createType _ = "VARCHAR(" <> show (fieldLength l) <> ")"
+data Varchar l
+instance varcharType :: Lengthable l => ColumnType (Varchar l) String String where
+  columnDefinition _ = Varchar $ fieldLength l
     where
       l = Proxy :: Proxy l
 
-type StringColumn = VarChar Normal
+type StringColumn = Varchar Normal
 
 data NotNull cd
 instance notNullType :: (ColumnType cd i o) => ColumnType (NotNull cd) i o where
-  createType _ = createType (Proxy :: Proxy cd) <> " NOT NULL"
+  columnDefinition _ = NotNull $ columnDefinition (Proxy :: Proxy cd)
 
 data Nullable cd
 instance nullType :: (ColumnType cd i o) => ColumnType (Nullable cd) (Maybe i) (Maybe o) where
-  createType _ = createType (Proxy :: Proxy cd) <> " NULL"
+  columnDefinition _ = Nullable $ columnDefinition (Proxy :: Proxy cd)
 
 data Default (def :: Symbol) cd
 instance defaultType :: (ColumnType cd i o, IsSymbol a) => ColumnType (Default a cd) (Maybe i) o where
-    createType _ = createType proxy <> " DEFAULT " <> reflectSymbol sproxy
+    columnDefinition _ = Default (reflectSymbol sproxy) (columnDefinition proxy)
       where
         proxy = Proxy :: Proxy cd
         sproxy = SProxy :: SProxy a

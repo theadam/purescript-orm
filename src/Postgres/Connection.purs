@@ -95,14 +95,13 @@ runWith runner sql = do
     true -> log $ "\n" <> sqlTupleToString realized
     false -> pure unit
 
-  let res = Postgres $ lift $ P.withConnection env.pool (\conn -> runner conn query params)
-  r <- res
+  r <- Postgres $ lift $ P.withConnection env.pool (\conn -> runner conn query params)
 
   case env.logResults of
     true -> log $ "RESULTS: " <> stringify r <> "\n"
     false -> pure unit
 
-  res
+  pure r
     where
       realized = realize positionalToParam sql
       query = fst realized
