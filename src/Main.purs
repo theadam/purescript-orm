@@ -51,6 +51,6 @@ main = launchAff_ $ do
   withConnection connection operations
 
   log "Running with Sqlite"
-  sqlite <- Sqlite.makeConnection { filePath: "test.db", logSql: logOps, logResults: logOps }
+  sqlite <- Sqlite.makeConnection { filePath: ":memory:", logSql: logOps, logResults: logOps }
 
   withConnection sqlite operations
