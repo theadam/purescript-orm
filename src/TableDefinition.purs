@@ -32,6 +32,7 @@ makeTable name = {
 data ColumnDefinition
   = Id
   | Varchar Int
+  | Integer
   | NotNull ColumnDefinition
   | Nullable ColumnDefinition
   | Default String ColumnDefinition
@@ -61,6 +62,10 @@ instance varcharType :: Lengthable l => ColumnType (Varchar l) String String whe
   columnDefinition _ = Varchar $ fieldLength l
     where
       l = Proxy :: Proxy l
+
+data IntegerColumn
+instance integerType :: ColumnType IntegerColumn Int Int where
+  columnDefinition _ = Integer
 
 type StringColumn = Varchar Normal
 

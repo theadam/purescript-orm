@@ -1,6 +1,6 @@
 module Main where
 
-import Prelude hiding (when, join)
+import Prelude hiding (when,join)
 
 import Connection (withTransaction, withConnection, class MonadQuerier)
 import Data.Foldable (for_)
@@ -8,12 +8,12 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
-import Expression (isNotNull, cond, when, default, (:<), (:&&), (:==), (:<>), (:<|>))
-import Operations (createIfNotExists, insertBatch, truncate, drop, select, insertBatch_)
+import Expression (cond, default, isNotNull, toNullable, when, (:<>), (:<|>), (:==))
+import Operations (createIfNotExists, insertBatch, truncate, drop, select, insertBatch_, insert)
 import Operations.Select (from, join)
 import Postgres.Connection as Postgres
 import Sqlite.Connection as Sqlite
-import TableDefinition (Table, makeTable, Default, Id, Nullable, StringColumn)
+import TableDefinition (Default, Id, IntegerColumn, Nullable, StringColumn, Table, makeTable)
 
 
 people :: Table
@@ -22,54 +22,65 @@ people :: Table
   , last_name :: StringColumn
   , middle_name :: Nullable StringColumn
   , gender :: Default "'Male'" StringColumn
+  , location_id :: Nullable IntegerColumn
   )
 people = makeTable "people"
+
+locations :: Table
+  ( id :: Id
+  , name :: StringColumn
+  )
+locations = makeTable "locations"
 
 operations :: forall m. MonadEffect m => MonadQuerier m => m Unit
 operations = do
   createIfNotExists people
+  createIfNotExists locations
   truncate people
+  truncate locations
 
   withTransaction do
+    dc <- insert locations { name: "Washington DC" }
+    philly <- insert locations { name: "Philadelphia" }
+    somewhere <- insert locations { name: "Somewhere Else" }
+
+
     -- Insert in a batch, returning the results
     newPeople <- insertBatch people \value -> do
-      value { first_name: "George", last_name: "Washington" }
-      value { first_name: "John", last_name: "Adams" }
-      value { first_name: "Thomas", last_name: "Jefferson" }
+      value { first_name: "George", last_name: "Washington", location_id: dc.id }
+      value { first_name: "John", last_name: "Adams", location_id: dc.id }
+      value { first_name: "Thomas", last_name: "Jefferson", location_id: dc.id }
 
     -- Insert in a batch, ignoring the results (this will change the
     -- underlying queries if it needs to in order to avoid returning results)
     insertBatch_ people \value -> do
-      value { first_name: "John", middle_name: "Quincy", last_name: "Adams" }
-      value { first_name: "Other", last_name: "Adams" }
-      value { first_name: "James", last_name: "Madison" }
-      value { first_name: "Benjamin", last_name: "Franklin" }
+      value { first_name: "John", middle_name: "Quincy", last_name: "Adams", location_id: dc.id }
+      value { first_name: "Other", last_name: "Adams", location_id: somewhere.id }
+      value { first_name: "James", last_name: "Madison", location_id: dc.id }
+      value { first_name: "Benjamin", last_name: "Franklin", location_id: philly.id }
 
     selectedPeople <- select do
-      p1 <- from people
-      p2 <- join people (\p -> p.last_name :== p1.last_name :&& p.id :< p1.id)
+      person <- from people
+      location <- join locations (\l -> person.location_id :== toNullable(l.id))
 
 
-      let name person = (
+      let name p = (
          cond (do
            when
-             (isNotNull person.middle_name)
-             (person.first_name :<> " " :<> (person.middle_name :<|> "") :<> " " :<> person.last_name)
+             (isNotNull p.middle_name)
+             (p.first_name :<> " " :<> (p.middle_name :<|> "") :<> " " :<> p.last_name)
            )
-           (default (person.first_name :<> " " :<> person.last_name))
+           (default (p.first_name :<> " " :<> p.last_name))
       )
 
 
-      pure $
-        { name1: name p1
-        , name2: name p2
-        , first_names_match: p1.first_name :== p2.first_name
-        }
+      pure { name: name person, location: location }
 
     for_ selectedPeople \person -> do
       log $ show person
 
   drop people
+  drop locations
 
 main :: Effect Unit
 main = launchAff_ $ do

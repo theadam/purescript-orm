@@ -13,6 +13,7 @@ import TableDefinition (ColumnDefinition(..))
 
 convertColumnDefinition :: forall m. MonadConverter m => ColumnDefinition -> m String
 convertColumnDefinition Id = pure $ "SERIAL PRIMARY KEY"
+convertColumnDefinition Integer = pure $ "INTEGER"
 convertColumnDefinition (Varchar i) = pure $ "VARCHAR(" <> show i <> ")"
 convertColumnDefinition (NotNull cd) = do
   def <- C.convertColumnDefinition cd
