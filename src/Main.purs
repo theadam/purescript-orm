@@ -8,7 +8,8 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
-import Operations (createIfNotExists, insertBatch, truncate, drop)
+import Operations (createIfNotExists, insertBatch, truncate, drop, select)
+import Operations.Select (from)
 import Postgres.Connection as Postgres
 import Sqlite.Connection as Sqlite
 import TableDefinition (Table, makeTable, Default, Id, Nullable, StringColumn)
@@ -35,6 +36,13 @@ operations = do
       value { first_name: "Thomas", last_name: "Jefferson" }
 
     for_ newPeople \person -> do
+      log $ show person
+
+    selectedPeople <- select do
+      p <- from people
+      pure p
+
+    for_ selectedPeople \person -> do
       log $ show person
 
   drop people

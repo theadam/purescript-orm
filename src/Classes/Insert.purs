@@ -3,15 +3,12 @@ module Classes.Insert where
 import Prelude
 
 import Control.Monad.Error.Class (class MonadError, throwError)
-import Control.Monad.Except (runExcept)
 import Data.Array (uncons)
-import Data.Bifunctor (lmap)
-import Data.Either (Either)
 import Data.Maybe (Maybe(..))
 import Data.Symbol (class IsSymbol, SProxy(..))
 import Defaultable (withDefaultNothings, class DefaultNothings)
 import Effect.Exception (Error, error)
-import Foreign (F, Foreign, isNull, readBoolean, readInt, readString)
+import Foreign (Foreign)
 import Prim.Row as Row
 import Prim.RowList (Cons, Nil, kind RowList, class RowToList)
 import Record (get, insert)
@@ -20,7 +17,7 @@ import ParameterizedSql (class ToValue, Value, toValue)
 import Type.Data.Row (RProxy)
 import Type.Data.RowList (RLProxy(..))
 import Type.Equality (class TypeEquals, to)
-import Utils (convertEither)
+import Utils (convertEither, class FromForeign, fromForeign)
 
 class InsertResult (t :: # Type) r | t -> r where
   mapResult :: forall m. MonadError Error m => RProxy t -> Array Foreign -> m r
@@ -43,26 +40,6 @@ instance consInsertResultL :: (ColumnType v i o, FromForeign o, IsSymbol k, Inse
         h <- convertEither $ fromForeign head
         rest <- mapResultL (RLProxy :: RLProxy rl) tail
         pure $ insert (SProxy :: SProxy k) h rest
-
-convertF :: forall a. F a -> Either Error a
-convertF = lmap (error <<< show) <<< runExcept
-
-class FromForeign a where
-  fromForeign :: Foreign -> Either Error a
-
-instance fromForeignInt :: FromForeign Int where
-  fromForeign = convertF <<< readInt
-
-instance fromForeignString :: FromForeign String where
-  fromForeign = convertF <<< readString
-
-instance fromForeignBoolean :: FromForeign Boolean where
-  fromForeign = convertF <<< readBoolean
-
-instance fromForeignMaybe :: (FromForeign a) => FromForeign (Maybe a) where
-  fromForeign a
-    | isNull a = pure Nothing
-    | otherwise = Just <$> fromForeign a
 
 -- Creates Insert from a single table and permissive insert record
 class Insertable (t :: # Type) r where

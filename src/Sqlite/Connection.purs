@@ -18,7 +18,7 @@ import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
 import Effect.Exception (Error)
 import Foreign (Foreign)
-import ParameterizedSql (ParameterizedSql, commaJoin, questionMarkToParam, realize, sqlTupleToString, toSql, valueToForeign, (:<>), Value(..))
+import ParameterizedSql (ParameterizedSql, Value(..), commaJoin, questionMarkToParam, realize, sqlTupleToString, toSql, valueToForeign, (:<>))
 import SQLite3 (DBConnection, closeDB, newDB, queryDB)
 import TableDefinition (ColumnDefinition(..))
 import Utils (stringify)
@@ -69,6 +69,10 @@ convert ins@(Insert name intos values)
         unzipped h = unzip $ filtered h
         filteredValues h = snd $ unzipped h
         filteredIntos h = fst $ unzipped h
+convert (Select selects state) = baseConvert (Select newSelects state)
+  where
+    newSelects = mapWithIndex makeAliased selects
+    makeAliased i sel = sel :<> " as '" :<> show i :<> "'"
 
 convert op = baseConvert op
 
@@ -109,9 +113,10 @@ runQuery sql = do
       params = valueToForeign <$> snd realized
 
 lastInsertedRow :: String -> Array String -> ParameterizedSql
-lastInsertedRow name intos = toSql "SELECT " :<> commaJoin (mapWithIndex mapAliases intos):<> " FROM " :<> name :<> " WHERE rowid = last_insert_rowid()"
+lastInsertedRow name intos = toSql "SELECT " :<> commaJoin (mapWithIndex mapAliases intos) :<> " FROM " :<> name :<> " " :<> tableAlias <> " WHERE rowid = last_insert_rowid()"
   where
-    mapAliases i a = a <> " as '" <> show i <> "'"
+    mapAliases i a = tableAlias <> "." <> a <> " as '" <> show i <> "'"
+    tableAlias = name <> "1"
 
 instance monadQuerierSqlite :: MonadQuerier Sqlite where
   runOperation (Insert name intos values) = do

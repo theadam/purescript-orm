@@ -2,25 +2,11 @@ module Convert where
 
 import Prelude
 
-import Connection (Operation(..))
+import Connection (From(..), Operation(..))
 import Control.Lazy (defer)
 import Data.Tuple (Tuple(..))
 import ParameterizedSql (ParameterizedSql, commaJoin, listify, toSql, (:<>))
 import TableDefinition (ColumnDefinition(..))
-
--- genericSelect :: Select -> ParameterizedSql
--- genericSelect (Select { selects, froms, filters, limit, offset }) =
---   toSql "SELECT " :<> commaJoin selects :<>
---     " FROM " :<> fs :<>
---     " WHERE " :<> ws :<>
---     handleInt "LIMIT" limit :<>
---     handleInt "OFFSET" offset
---       where
---         mapFrom (From t a) = t <> " " <> a
---         fs = commaJoin $ mapFrom <$> froms
---         ws = sqlJoin " AND " filters
---         handleInt text (Just i) = " " <> text <> " " <> show i
---         handleInt _ Nothing = ""
 
 makeConvertColumnDefinition :: (ColumnDefinition -> String) -> ColumnDefinition -> String
 makeConvertColumnDefinition _ Id = "SERIAL PRIMARY KEY"
@@ -44,6 +30,11 @@ makeConvert convertCol (Create ifNotExists name cols) = toSql "CREATE TABLE " :<
     mapCol (Tuple col def) = col <> " " <> convertCol def
 makeConvert _ (Truncate t) = toSql "TRUNCATE TABLE " :<> t
 makeConvert _ (Drop t) = toSql "DROP TABLE " :<> t
+makeConvert _ (Select selects { froms }) =
+  toSql "SELECT " :<> commaJoin selects :<> " FROM " :<> (commaJoin $ fromToStr <$> froms)
+    where
+      fromToStr (From table alias) = table <> " " <> alias
+
 
 convert :: Operation -> ParameterizedSql
 convert = makeConvert convertColumnDefinition
