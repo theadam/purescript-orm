@@ -40,7 +40,7 @@ operations = do
 
     selectedPeople <- select do
       p <- from people
-      pure p
+      pure $ { person: p, test: p.first_name }
 
     for_ selectedPeople \person -> do
       log $ show person

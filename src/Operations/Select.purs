@@ -6,7 +6,7 @@ import Classes.Select (class Fromable, class SelectResult, createSelects, mapRes
 import Connection (class MonadQuerier, From(..), Operation(..), SelectData, baseSelectData, runOperation)
 import Control.Monad.State (State, get, modify_, runState)
 import Data.Traversable (sequence)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), snd)
 import TableDefinition (Table)
 import Type.Prelude (Proxy(..))
 import Utils (convertEither)
@@ -31,7 +31,7 @@ from t = do
 
   let alias = t.name <> show count
 
-  modify_ \s -> s { aliasCount = count, select = s.select { froms = s.select.froms <> [From t.name alias]} }
+  modify_ \s -> s { aliasCount = count, select { froms = s.select.froms <> [From t.name alias]} }
   pure $ toFroms t.columns alias
 
 select :: forall m r o. MonadQuerier m => SelectResult r o => Select r -> m (Array o)
@@ -39,7 +39,7 @@ select s = do
   aaf <- runOperation op
 
   let outputs = sequence $ mapResultRow (Proxy :: Proxy r) <$> aaf
-  convertEither outputs
+  map snd <$> convertEither outputs
     where
       (Tuple res state) = runState s baseSelectState
       op = Select (createSelects res) state.select

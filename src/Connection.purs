@@ -13,13 +13,20 @@ import TableDefinition (ColumnDefinition)
 -- From table alias
 data From = From String String
 
+data Where
+  = Cond ParameterizedSql
+  | And Where Where
+  | Or Where Where
+
 type SelectData =
   { froms :: Array From
+  , wheres :: Array Where
   }
 
 baseSelectData :: SelectData
 baseSelectData =
   { froms: []
+  , wheres: []
   }
 
 data Operation
