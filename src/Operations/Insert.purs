@@ -18,7 +18,7 @@ insertBase :: forall m res cs
   => InsertResult cs res
   => Table cs -> Array (Array Value) -> m (Array res)
 insertBase t r = do
-  fs <- runOperation $ Insert t.name t.columnNames r
+  fs <- runOperation $ Insert t.name t.columnNames r true
   sequence $ mapResult t.columns <$> fs
 
 insert :: forall m r res cs
@@ -42,3 +42,22 @@ insertBatch t fn = insertBase t (execWriter $ fn vs)
     vs :: forall r. Insertable cs r => r -> Writer (Array (Array Value)) Unit
     vs r = tell $ [values t.columns r]
 
+insertBase_ :: forall m cs
+  . MonadQuerier m
+  => Table cs -> Array (Array Value) -> m Unit
+insertBase_ t r = (runOperation $ Insert t.name t.columnNames r false) $> unit
+
+insert_ :: forall m r cs
+  . MonadQuerier m
+  => Insertable cs r
+  => Table cs -> r -> m Unit
+insert_ t r = insertBase_ t [values t.columns r]
+
+insertBatch_ :: forall m cs
+  . MonadQuerier m
+  => Table cs
+  -> ((forall r. Insertable cs r => r -> Writer (Array (Array Value)) Unit) -> Writer (Array (Array Value)) Unit) -> m Unit
+insertBatch_ t fn = insertBase_ t (execWriter $ fn vs)
+  where
+    vs :: forall r. Insertable cs r => r -> Writer (Array (Array Value)) Unit
+    vs r = tell $ [values t.columns r]

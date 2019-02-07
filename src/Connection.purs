@@ -29,8 +29,10 @@ baseSelectData =
   , wheres: []
   }
 
+type ReturnInsertResults = Boolean
+
 data Operation
-  = Insert String (Array String) (Array (Array Value))
+  = Insert String (Array String) (Array (Array Value)) ReturnInsertResults
   | Create Boolean String (Array (Tuple String ColumnDefinition))
   | Truncate String
   | Drop String

@@ -56,10 +56,10 @@ baseConvert = Convert.makeConvert convertColumnDefinition
 -- Convert Section
 convert :: Operation -> ParameterizedSql
 convert (Truncate name) = toSql "DELETE FROM " :<> name
-convert ins@(Insert name intos values)
+convert ins@(Insert name intos values ret)
   | length values > 1 = baseConvert ins
   | otherwise = case head values of
-    Just h -> baseConvert $ Insert name (filteredIntos h) [(filteredValues h)]
+    Just h -> baseConvert $ Insert name (filteredIntos h) [(filteredValues h)] ret
     Nothing -> baseConvert ins
       where
         zipped vs = zip intos vs
@@ -119,14 +119,17 @@ lastInsertedRow name intos = toSql "SELECT " :<> commaJoin (mapWithIndex mapAlia
     tableAlias = name <> "1"
 
 instance monadQuerierSqlite :: MonadQuerier Sqlite where
-  runOperation (Insert name intos values) = do
-    let inserts = (\value -> Insert name intos [value]) <$> values
+  runOperation (Insert name intos values returnResults) = do
+    let inserts = (\value -> Insert name intos [value] returnResults) <$> values
     for inserts \ins -> do
       _ <- runQuery $ convert ins
-      res <- runQuery $ lastInsertedRow name intos
-      case head res of
-        Just a -> pure a
-        Nothing -> pure []
+      case returnResults of
+        false -> pure []
+        true -> do
+          res <- runQuery $ lastInsertedRow name intos
+          case head res of
+            Just a -> pure a
+            Nothing -> pure []
   runOperation op = runQuery $ convert op
 
   runCommand op = do

@@ -17,7 +17,7 @@ import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
 import Effect.Exception (Error)
 import Foreign (Foreign)
-import ParameterizedSql (ParameterizedSql, SqlPart(..), Value(..), commaJoin, mapParts, positionalToParam, realize, sqlTupleToString, (:<>), valueToForeign)
+import ParameterizedSql (ParameterizedSql(..), SqlPart(..), Value(..), commaJoin, mapParts, positionalToParam, realize, sqlTupleToString, (:<>), valueToForeign, toSql)
 import Utils (stringify)
 
 -- Env Section
@@ -70,7 +70,10 @@ nullToDefault (Param NullValue) = StringPart "DEFAULT"
 nullToDefault a = a
 
 convert :: Operation -> ParameterizedSql
-convert ins@(Insert name intos values) = mapParts nullToDefault (Convert.convert ins) :<> " RETURNING " :<> commaJoin intos
+convert ins@(Insert name intos values returnResults) = mapParts nullToDefault (Convert.convert ins) :<> ret returnResults
+  where
+    ret true = toSql " RETURNING " :<> commaJoin intos
+    ret false = ParameterizedSql []
 convert a = Convert.convert a
 
 
