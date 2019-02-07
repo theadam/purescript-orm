@@ -2,12 +2,12 @@ module Convert where
 
 import Prelude
 
-import Connection (class MonadConverter, From(..), Operation(..))
+import Connection (class MonadConverter, From(..), Join(..), Operation(..))
 import Connection as C
 import Data.Array (length)
 import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..))
-import Expression (representation)
+import Expression (BoolExp, representation)
 import ParameterizedSql (ParameterizedSql, commaJoin, listify, sqlJoin, toSql, (:<>:))
 import TableDefinition (ColumnDefinition(..))
 
@@ -43,11 +43,26 @@ convertOperation (Create ifNotExists name cols) = do
 
 convertOperation (Truncate t) = pure $ toSql "TRUNCATE TABLE " :<>: t
 convertOperation (Drop t) = pure $ toSql "DROP TABLE " :<>: t
-convertOperation (Select selects { froms, wheres }) = pure $
-  toSql "SELECT " :<>: commaJoin selects :<>: " FROM " :<>: (commaJoin $ fromToStr <$> froms) :<>: ws
+convertOperation (Select selects { froms, wheres, joins }) = pure $
+  toSql "SELECT " :<>: commaJoin selects :<>: " FROM " :<>: (commaJoin $ fromToStr <$> froms) :<>: joinClause :<>: ws
     where
-      fromToStr (From table alias) = table <> " " <> alias
       ws | length wheres == 0 = toSql ""
-         | otherwise = toSql " WHERE " :<>: joined
-      joined = sqlJoin " AND " (representation <$> wheres)
+         | otherwise = toSql " WHERE " :<>: conditions
+      conditions = sqlJoin " AND " (representation <$> wheres)
+      joinClause | length joins == 0 = toSql ""
+                 | otherwise = toSql " " :<>: sqlJoin " " (joinToSql <$> joins)
 
+
+
+-- Helpers
+fromToStr :: From -> String
+fromToStr (From table alias) = table <> " " <> alias
+
+joinToSql :: Join -> ParameterizedSql
+joinToSql (Inner f e) = toSql "JOIN " :<>: joinContent f e
+joinToSql (Left f e) = toSql "LEFT JOIN " :<>: joinContent f e
+joinToSql (Outer f e) = toSql "OUTER JOIN " :<>: joinContent f e
+joinToSql (Right f e) = toSql "RIGHT JOIN " :<>: joinContent f e
+
+joinContent :: From -> BoolExp -> ParameterizedSql
+joinContent f e = (toSql $ fromToStr f) :<>: " ON " :<>: representation e

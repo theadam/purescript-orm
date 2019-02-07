@@ -13,16 +13,23 @@ import TableDefinition (ColumnDefinition)
 
 -- From table alias
 data From = From String String
+data Join
+  = Inner From BoolExp
+  | Left From BoolExp
+  | Outer From BoolExp
+  | Right From BoolExp
 
 type SelectData =
   { froms :: Array From
   , wheres :: Array BoolExp
+  , joins :: Array Join
   }
 
 baseSelectData :: SelectData
 baseSelectData =
   { froms: []
   , wheres: []
+  , joins: []
   }
 
 type ReturnInsertResults = Boolean

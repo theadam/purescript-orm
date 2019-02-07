@@ -1,6 +1,6 @@
 module Main where
 
-import Prelude hiding (when)
+import Prelude hiding (when, join)
 
 import Connection (withTransaction, withConnection, class MonadQuerier)
 import Data.Foldable (for_)
@@ -10,7 +10,7 @@ import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
 import Expression (isNotNull, cond, when, default, (:<), (:&&), (:==), (:<>), (:<|>))
 import Operations (createIfNotExists, insertBatch, truncate, drop, select, insertBatch_)
-import Operations.Select (from, filter)
+import Operations.Select (from, join)
 import Postgres.Connection as Postgres
 import Sqlite.Connection as Sqlite
 import TableDefinition (Table, makeTable, Default, Id, Nullable, StringColumn)
@@ -47,7 +47,8 @@ operations = do
 
     selectedPeople <- select do
       p1 <- from people
-      p2 <- from people
+      p2 <- join people (\p -> p.last_name :== p1.last_name :&& p.id :< p1.id)
+
 
       let name person = (
          cond (do
@@ -58,7 +59,6 @@ operations = do
            (default (person.first_name :<> " " :<> person.last_name))
       )
 
-      filter $ p1.last_name :== p2.last_name :&& p1.id :< p2.id
 
       pure $
         { name1: name p1
