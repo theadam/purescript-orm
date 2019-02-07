@@ -9,8 +9,9 @@ import Data.Maybe (Maybe(..))
 import Data.Symbol (class IsSymbol)
 import Data.Tuple (Tuple(..))
 import Effect.Exception (Error, error)
+import Expression (class Expression, ColumnAlias(..), representation)
 import Foreign (Foreign)
-import ParameterizedSql (ParameterizedSql, toSql)
+import ParameterizedSql (ParameterizedSql)
 import Prim.Row as Row
 import Prim.RowList (kind RowList, Nil, Cons, class RowToList)
 import Record (insert, delete, get)
@@ -36,6 +37,12 @@ instance selectResultRecord ::
   ) => SelectResult (Record r) (Record o) where
     mapResultRow _ = mapResultRowRL (RLProxy :: RLProxy rl)
     createSelects r = createSelectsRL (RLProxy :: RLProxy rl) r
+else instance selectResultExpression :: (Expression t o, FromForeign o) => SelectResult t o where
+  mapResultRow _ fs = do
+    case uncons fs of
+      Nothing -> throwError $ error "Missing item in result row"
+      Just { head, tail } -> Tuple tail <$> fromForeign head
+  createSelects expr = [representation expr]
 
 instance selectResultRowListLast ::
   (
@@ -67,14 +74,6 @@ else instance selectResultRowListRecur ::
       (createSelects $ get (SProxy :: SProxy k) r) <>
       (createSelectsRL (RLProxy :: RLProxy rl) (delete (SProxy :: SProxy k) r))
 
-data ColumnAlias o = ColumnAlias String String
-
-instance selectResultColumnAlias :: (FromForeign o) => SelectResult (ColumnAlias o) o where
-  mapResultRow _ fs = do
-    case uncons fs of
-      Nothing -> throwError $ error "Missing item in result row"
-      Just { head, tail } -> Tuple tail <$> fromForeign head
-  createSelects (ColumnAlias table field) = [toSql $ table <> "." <> field]
 
 -- Create a record o Column aliases from a table
 class Fromable (t :: # Type) exprs | t -> exprs where

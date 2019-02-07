@@ -2,7 +2,7 @@ module Postgres.Connection where
 
 import Prelude
 
-import Connection (class MonadConnection, class MonadQuerier, Operation(..))
+import Connection (class MonadConnection, class MonadConverter, class MonadQuerier, Operation(..), convertOperation)
 import Control.Monad.Cont (lift)
 import Control.Monad.Error.Class (class MonadError, class MonadThrow)
 import Control.Monad.Reader (class MonadAsk, ReaderT, ask, runReaderT)
@@ -17,7 +17,7 @@ import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
 import Effect.Exception (Error)
 import Foreign (Foreign)
-import ParameterizedSql (ParameterizedSql(..), SqlPart(..), Value(..), commaJoin, mapParts, positionalToParam, realize, sqlTupleToString, (:<>), valueToForeign, toSql)
+import ParameterizedSql (ParameterizedSql(..), SqlPart(..), Value(..), commaJoin, mapParts, positionalToParam, realize, sqlTupleToString, (:<>:), valueToForeign, toSql)
 import Utils (stringify)
 
 -- Env Section
@@ -69,14 +69,6 @@ nullToDefault :: SqlPart -> SqlPart
 nullToDefault (Param NullValue) = StringPart "DEFAULT"
 nullToDefault a = a
 
-convert :: Operation -> ParameterizedSql
-convert ins@(Insert name intos values returnResults) = mapParts nullToDefault (Convert.convert ins) :<> ret returnResults
-  where
-    ret true = toSql " RETURNING " :<> commaJoin intos
-    ret false = ParameterizedSql []
-convert a = Convert.convert a
-
-
 -- Connection
 newtype Postgres a = Postgres (ReaderT Env Aff a)
 
@@ -110,10 +102,19 @@ runWith runner sql = do
       query = fst realized
       params = valueToForeign <$> snd realized
 
+instance monadConverterPostgres :: MonadConverter Postgres where
+  convertColumnDefinition cd = Convert.convertColumnDefinition cd
+  convertOperation ins@(Insert name intos values returnResults) = do
+    orig <- Convert.convertOperation ins
+    pure $ mapParts nullToDefault orig :<>: ret returnResults
+      where
+        ret true = toSql " RETURNING " :<>: commaJoin intos
+        ret false = ParameterizedSql []
+  convertOperation op = Convert.convertOperation op
 
 instance monadQuerierPostgres :: MonadQuerier Postgres where
-  runOperation op = runWith unsafeQuery $ convert op
-  runCommand op = runWith (\conn s -> command conn (Query s)) $ convert op
+  runOperation op = convertOperation op >>= runWith unsafeQuery
+  runCommand op = convertOperation op >>= runWith (\conn s -> command conn (Query s))
 
   withTransaction (Postgres m) = do
     wrapped <- ask

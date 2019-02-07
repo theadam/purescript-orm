@@ -47,6 +47,7 @@ instance idColumnType :: ColumnType Id (Maybe Id) Int where
 
 instance valueId :: ToValue Id where
   toValue _ = NullValue
+  sqlType _ = "int"
 
 class Lengthable a where
   fieldLength :: Proxy a -> Int

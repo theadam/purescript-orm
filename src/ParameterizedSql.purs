@@ -7,6 +7,7 @@ import Data.List (List(..), (:), fromFoldable)
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst, snd)
 import Foreign (Foreign, unsafeToForeign)
+import Type.Prelude (Proxy(..))
 import Utils (null)
 
 data Value
@@ -23,19 +24,24 @@ valueToForeign NullValue = null
 
 class ToValue a where
   toValue :: a -> Value
+  sqlType :: Proxy a -> String
 
 instance toValueString :: ToValue String where
   toValue = StringValue
+  sqlType _ = "VARCHAR"
 
 else instance toValueInt :: ToValue Int where
   toValue = IntValue
+  sqlType _ = "INT"
 
 else instance toValueNumber :: ToValue Number where
   toValue = NumberValue
+  sqlType _ = "NUMBER"
 
 else instance toValueMaybe :: (ToValue a) => ToValue (Maybe a) where
   toValue (Just a) = toValue a
   toValue _ = NullValue
+  sqlType _ = sqlType (Proxy :: Proxy a)
 
 instance showValue :: Show Value where
   show (StringValue s) = show s
@@ -79,7 +85,7 @@ instance addToParameterizedSqlToParameterizedSql :: (
   ) => AddToParameterizedSql a b where
   addTo a b = toSql a <> toSql b
 
-infixr 5 addTo as :<>
+infixr 5 addTo as :<>:
 
 sqlJoin :: forall a. (ToParameterizedSql a) => String -> Array a -> ParameterizedSql
 sqlJoin str ary = intercalate (ParameterizedSql $ [StringPart str]) $ toSql <$> ary
@@ -88,7 +94,7 @@ commaJoin :: forall a. (ToParameterizedSql a) => Array a -> ParameterizedSql
 commaJoin = sqlJoin ", "
 
 listify :: forall a. (ToParameterizedSql a) => Array a -> ParameterizedSql
-listify ary = "(" :<> commaJoin ary :<> ")"
+listify ary = "(" :<>: commaJoin ary :<>: ")"
 
 instance showSQLPart :: Show SqlPart where
   show (StringPart p) = p
@@ -124,7 +130,7 @@ realize' toParam i (StringPart str:rest) = Tuple (str <> rStr) (rParams)
 realize' toParam i (Param f:rest) = Tuple (toParam i <> rStr) (cons f rParams)
   where
     Tuple rStr rParams = realize' toParam (i + 1) rest
-realize' toParam i (TypedParam f s:rest) = Tuple (toParam i <> "::" <> s <> rStr) (cons f rParams)
+realize' toParam i (TypedParam f s:rest) = Tuple ("CAST(" <> toParam i <> " AS " <> s <> ")" <> rStr) (cons f rParams)
   where
     Tuple rStr rParams = realize' toParam (i + 1) rest
 realize' _ _ Nil = Tuple "" []

@@ -6,6 +6,7 @@ import Control.Monad.Error.Class (class MonadError)
 import Data.Tuple (Tuple)
 import Effect.Aff (Aff)
 import Effect.Exception (Error)
+import Expression (BoolExp)
 import Foreign (Foreign)
 import ParameterizedSql (ParameterizedSql, Value)
 import TableDefinition (ColumnDefinition)
@@ -13,14 +14,9 @@ import TableDefinition (ColumnDefinition)
 -- From table alias
 data From = From String String
 
-data Where
-  = Cond ParameterizedSql
-  | And Where Where
-  | Or Where Where
-
 type SelectData =
   { froms :: Array From
-  , wheres :: Array Where
+  , wheres :: Array BoolExp
   }
 
 baseSelectData :: SelectData
@@ -38,7 +34,11 @@ data Operation
   | Drop String
   | Select (Array ParameterizedSql) SelectData
 
-class (Monad m, MonadError Error m) <= MonadQuerier m where
+class (Monad m, MonadError Error m) <= MonadConverter m where
+  convertColumnDefinition :: ColumnDefinition -> m String
+  convertOperation :: Operation -> m ParameterizedSql
+
+class (MonadConverter m) <= MonadQuerier m where
   runOperation :: Operation -> m (Array (Array Foreign))
   runCommand :: Operation -> m Int
   withTransaction :: forall a. m a -> m a

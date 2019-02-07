@@ -7,6 +7,7 @@ import Connection (class MonadQuerier, From(..), Operation(..), SelectData, base
 import Control.Monad.State (State, get, modify_, runState)
 import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..), snd)
+import Expression (BoolExp)
 import TableDefinition (Table)
 import Type.Prelude (Proxy(..))
 import Utils (convertEither)
@@ -43,3 +44,7 @@ select s = do
     where
       (Tuple res state) = runState s baseSelectState
       op = Select (createSelects res) state.select
+
+-- Kinda like where, but called filter due to reserved words
+filter :: BoolExp -> Select Unit
+filter w = modify_ \s -> s { select { wheres = s.select.wheres <> [w] } }

@@ -2,8 +2,7 @@ module Sqlite.Connection where
 
 import Prelude
 
-import Connection (Operation(..), class MonadConnection, class MonadQuerier, runOperation)
-import Control.Lazy (defer)
+import Connection (class MonadConnection, class MonadConverter, class MonadQuerier, Operation(..), runOperation, convertOperation)
 import Control.Monad.Cont (lift)
 import Control.Monad.Error.Class (class MonadError, class MonadThrow)
 import Control.Monad.Reader (class MonadAsk, ReaderT, runReaderT, ask)
@@ -18,7 +17,7 @@ import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
 import Effect.Exception (Error)
 import Foreign (Foreign)
-import ParameterizedSql (ParameterizedSql, Value(..), commaJoin, questionMarkToParam, realize, sqlTupleToString, toSql, valueToForeign, (:<>))
+import ParameterizedSql (ParameterizedSql, Value(..), commaJoin, questionMarkToParam, realize, sqlTupleToString, toSql, valueToForeign, (:<>:))
 import SQLite3 (DBConnection, closeDB, newDB, queryDB)
 import TableDefinition (ColumnDefinition(..))
 import Utils (stringify)
@@ -45,36 +44,6 @@ makeConnection :: Config -> Aff Env
 makeConnection c = do
   db <- newDB c.filePath
   pure $ Env { db: db, logSql: c.logSql, logResults: c.logResults }
-
-convertColumnDefinition :: ColumnDefinition -> String
-convertColumnDefinition Id = "INTEGER PRIMARY KEY AUTOINCREMENT"
-convertColumnDefinition cd = Convert.makeConvertColumnDefinition (defer \_ -> convertColumnDefinition) cd
-
-baseConvert :: Operation -> ParameterizedSql
-baseConvert = Convert.makeConvert convertColumnDefinition
-
--- Convert Section
-convert :: Operation -> ParameterizedSql
-convert (Truncate name) = toSql "DELETE FROM " :<> name
-convert ins@(Insert name intos values ret)
-  | length values > 1 = baseConvert ins
-  | otherwise = case head values of
-    Just h -> baseConvert $ Insert name (filteredIntos h) [(filteredValues h)] ret
-    Nothing -> baseConvert ins
-      where
-        zipped vs = zip intos vs
-        keep (Tuple into NullValue) = false
-        keep a = true
-        filtered h = filter keep (zipped h)
-        unzipped h = unzip $ filtered h
-        filteredValues h = snd $ unzipped h
-        filteredIntos h = fst $ unzipped h
-convert (Select selects state) = baseConvert (Select newSelects state)
-  where
-    newSelects = mapWithIndex makeAliased selects
-    makeAliased i sel = sel :<> " as '" :<> show i :<> "'"
-
-convert op = baseConvert op
 
 -- Connection
 newtype Sqlite a = Sqlite (ReaderT Env Aff a)
@@ -113,16 +82,44 @@ runQuery sql = do
       params = valueToForeign <$> snd realized
 
 lastInsertedRow :: String -> Array String -> ParameterizedSql
-lastInsertedRow name intos = toSql "SELECT " :<> commaJoin (mapWithIndex mapAliases intos) :<> " FROM " :<> name :<> " " :<> tableAlias <> " WHERE rowid = last_insert_rowid()"
+lastInsertedRow name intos = toSql "SELECT " :<>: commaJoin (mapWithIndex mapAliases intos) :<>: " FROM " :<>: name :<>: " " :<>: tableAlias <> " WHERE rowid = last_insert_rowid()"
   where
     mapAliases i a = tableAlias <> "." <> a <> " as '" <> show i <> "'"
     tableAlias = name <> "1"
+
+
+instance monadConvertSqlite :: MonadConverter Sqlite where
+  convertColumnDefinition Id = pure $ "INTEGER PRIMARY KEY AUTOINCREMENT"
+  convertColumnDefinition cd = Convert.convertColumnDefinition cd
+
+  convertOperation (Truncate name) = pure $ toSql "DELETE FROM " :<>: name
+  convertOperation ins@(Insert name intos values ret)
+    | length values > 1 = Convert.convertOperation ins
+    | otherwise = case head values of
+      Just h -> Convert.convertOperation $ Insert name (filteredIntos h) [(filteredValues h)] ret
+      Nothing -> Convert.convertOperation ins
+        where
+          zipped vs = zip intos vs
+          keep (Tuple into NullValue) = false
+          keep a = true
+          filtered h = filter keep (zipped h)
+          unzipped h = unzip $ filtered h
+          filteredValues h = snd $ unzipped h
+          filteredIntos h = fst $ unzipped h
+  convertOperation (Select selects state) = Convert.convertOperation (Select newSelects state)
+    where
+      newSelects = mapWithIndex makeAliased selects
+      makeAliased i sel = sel :<>: " as '" :<>: show i :<>: "'"
+
+  convertOperation op = Convert.convertOperation op
+
+
 
 instance monadQuerierSqlite :: MonadQuerier Sqlite where
   runOperation (Insert name intos values returnResults) = do
     let inserts = (\value -> Insert name intos [value] returnResults) <$> values
     for inserts \ins -> do
-      _ <- runQuery $ convert ins
+      _ <- convertOperation ins >>= runQuery
       case returnResults of
         false -> pure []
         true -> do
@@ -130,7 +127,7 @@ instance monadQuerierSqlite :: MonadQuerier Sqlite where
           case head res of
             Just a -> pure a
             Nothing -> pure []
-  runOperation op = runQuery $ convert op
+  runOperation op = convertOperation op >>= runQuery
 
   runCommand op = do
     log "Warning: Cannot run commands with this SQLite driver.  All Commands return 0."

@@ -40,7 +40,10 @@ instance fromForeignString :: FromForeign String where
   fromForeign = convertF <<< readString
 
 instance fromForeignBoolean :: FromForeign Boolean where
-  fromForeign = convertF <<< readBoolean
+  fromForeign v =
+    case convertF $ readBoolean v of
+      Left e -> (\i -> i /= 0) <$> (convertF $ readInt v)
+      Right a -> pure a
 
 instance fromForeignMaybe :: (FromForeign a) => FromForeign (Maybe a) where
   fromForeign a
