@@ -74,7 +74,7 @@ operations = do
       )
 
 
-      pure { name: name person, location: location }
+      pure { name: name person, location: location.name }
 
     for_ selectedPeople \person -> do
       log $ show person
